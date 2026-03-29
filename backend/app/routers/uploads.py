@@ -7,6 +7,7 @@ from app.models.memory import Memory, MemoryImage
 from app.schemas.upload import MemoryUploadResponse
 from app.services.image_processing_service import ImageProcessingService
 from app.utils.file_storage import save_upload
+from app.workers.title_generation_worker import title_generation_worker
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 image_processing_service = ImageProcessingService()
@@ -49,6 +50,10 @@ async def upload_memory(
         processed_count += 1
 
     db.commit()
+
+    # Enqueue for title generation if needed
+    if title_status == 'pending':
+        await title_generation_worker.enqueue(memory.id)
 
     return MemoryUploadResponse(
         id=memory.id,
