@@ -12,6 +12,25 @@ services:
       - neo4j_logs:/logs
     restart: unless-stopped
 
+  postgres:
+    image: postgres:15-alpine
+    container_name: pkb-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: personal_knowledge_base
+      POSTGRES_USER: pkb_user
+      POSTGRES_PASSWORD: pkb_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pkb_user -d personal_knowledge_base"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   neo4j_data:
   neo4j_logs:
+  postgres_data:

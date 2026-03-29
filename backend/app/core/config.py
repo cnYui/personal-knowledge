@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite:///./app.db"
+    database_url: str = "postgresql://pkb_user:pkb_password@localhost:5432/personal_knowledge_base"
     upload_dir: str = "backend/uploads/images"
     knowledge_graph_base_url: str = "http://localhost:8001"
     multimodal_provider: str = "mock"
