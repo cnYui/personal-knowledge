@@ -3,12 +3,12 @@ from datetime import datetime
 
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodeType
-from graphiti_core.llm_client import OpenAIClient
 from graphiti_core.llm_client.config import LLMConfig
-from graphiti_core.embedder import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.cross_encoder import OpenAIRerankerClient
 
 from app.core.config import settings
+from app.services.local_embedder import LocalEmbedder, LocalEmbedderConfig
+from app.services.stepfun_llm_client import StepFunLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -17,21 +17,21 @@ class GraphitiClient:
     """Wrapper for Graphiti SDK to manage knowledge graph operations."""
 
     def __init__(self):
-        # Configure LLM client to use StepFun API (OpenAI-compatible)
+        # Configure LLM client to use StepFun API (custom client for compatibility)
         llm_config = LLMConfig(
             api_key=settings.openai_api_key,
             base_url=settings.openai_base_url,
-            model='step-1-8k',  # StepFun model
+            model='step-1-8k',  # StepFun model for medium tasks
+            small_model='step-1-8k',  # StepFun doesn't have a separate small model
+            max_tokens=2048,  # Reduced to fit within step-1-8k's 8192 token limit
         )
-        llm_client = OpenAIClient(config=llm_config)
+        llm_client = StepFunLLMClient(config=llm_config)
 
-        # Configure Embedder to use StepFun API
-        embedder_config = OpenAIEmbedderConfig(
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url,
-            embedding_model='text-embedding-3-small',  # StepFun compatible model
+        # Configure Local Embedder (runs offline, no API needed)
+        embedder_config = LocalEmbedderConfig(
+            model_name='paraphrase-multilingual-MiniLM-L12-v2',  # Supports Chinese and English
         )
-        embedder = OpenAIEmbedder(config=embedder_config)
+        embedder = LocalEmbedder(config=embedder_config)
 
         # Configure CrossEncoder (Reranker) to use StepFun API
         reranker_config = LLMConfig(
@@ -49,7 +49,7 @@ class GraphitiClient:
             embedder=embedder,
             cross_encoder=cross_encoder,
         )
-        logger.info('GraphitiClient initialized with StepFun API')
+        logger.info('GraphitiClient initialized with StepFun API and local embedder')
 
     async def add_memory_episode(
         self,
