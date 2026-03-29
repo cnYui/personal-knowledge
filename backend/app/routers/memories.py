@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.main import get_worker
+from app.dependencies import get_worker
 from app.schemas.graph import AddToGraphResponse, BatchAddToGraphRequest, BatchAddToGraphResponse, GraphStatusResponse
 from app.schemas.memory import MemoryCreate, MemoryRead, MemoryUpdate
 from app.services.memory_service import MemoryService

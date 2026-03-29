@@ -11,18 +11,10 @@ from app.routers.chat import router as chat_router
 from app.routers.memories import router as memories_router
 from app.routers.uploads import router as uploads_router
 from app.workers import GraphitiIngestWorker
+from app import dependencies
 
 logger = logging.getLogger(__name__)
 
-# Global worker instance
-graphiti_worker: GraphitiIngestWorker | None = None
-
-
-def get_worker():
-    """Dependency to get the GraphitiIngestWorker instance."""
-    if graphiti_worker is None:
-        raise RuntimeError('GraphitiIngestWorker not initialized')
-    return graphiti_worker
 
 app = FastAPI(title="Personal Knowledge Base API")
 app.add_middleware(
@@ -46,12 +38,10 @@ Base.metadata.create_all(bind=engine)
 @app.on_event('startup')
 async def startup_event():
     """Initialize and start the GraphitiIngestWorker on application startup."""
-    global graphiti_worker
-    
-    graphiti_worker = GraphitiIngestWorker()
+    dependencies.graphiti_worker = GraphitiIngestWorker()
     
     # Start worker in background task
-    asyncio.create_task(graphiti_worker.start())
+    asyncio.create_task(dependencies.graphiti_worker.start())
     
     logger.info('Application startup complete, GraphitiIngestWorker started')
 
@@ -59,14 +49,12 @@ async def startup_event():
 @app.on_event('shutdown')
 async def shutdown_event():
     """Stop the GraphitiIngestWorker gracefully on application shutdown."""
-    global graphiti_worker
-    
-    if graphiti_worker:
-        await graphiti_worker.stop()
+    if dependencies.graphiti_worker:
+        await dependencies.graphiti_worker.stop()
         
         # Wait for queue to drain (with timeout)
         try:
-            await asyncio.wait_for(graphiti_worker.queue.join(), timeout=30.0)
+            await asyncio.wait_for(dependencies.graphiti_worker.queue.join(), timeout=30.0)
         except asyncio.TimeoutError:
             logger.warning('Queue did not drain within timeout, forcing shutdown')
     
