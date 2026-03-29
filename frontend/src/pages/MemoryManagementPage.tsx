@@ -42,7 +42,6 @@ export function MemoryManagementPage() {
       {updateMutation.isError || deleteMutation.isError ? (
         <Alert severity="error">操作失败，请稍后重试。</Alert>
       ) : null}
-      <Alert severity="info">页面每 5 秒自动刷新一次，用于同步后端异步生成的标题。</Alert>
       <MemoryFilterBar keyword={keyword} onKeywordChange={setKeyword} />
       {empty ? <Typography color="text.secondary">当前没有匹配的记忆。</Typography> : null}
 
