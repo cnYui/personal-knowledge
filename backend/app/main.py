@@ -1,3 +1,6 @@
+import asyncio
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -8,6 +11,8 @@ from app.routers.chat import router as chat_router
 from app.routers.memories import router as memories_router
 from app.routers.uploads import router as uploads_router
 from app.workers import GraphitiIngestWorker
+
+logger = logging.getLogger(__name__)
 
 # Global worker instance
 graphiti_worker: GraphitiIngestWorker | None = None
@@ -36,6 +41,36 @@ app.include_router(chat_router)
 app.include_router(memories_router)
 app.include_router(uploads_router)
 Base.metadata.create_all(bind=engine)
+
+
+@app.on_event('startup')
+async def startup_event():
+    """Initialize and start the GraphitiIngestWorker on application startup."""
+    global graphiti_worker
+    
+    graphiti_worker = GraphitiIngestWorker()
+    
+    # Start worker in background task
+    asyncio.create_task(graphiti_worker.start())
+    
+    logger.info('Application startup complete, GraphitiIngestWorker started')
+
+
+@app.on_event('shutdown')
+async def shutdown_event():
+    """Stop the GraphitiIngestWorker gracefully on application shutdown."""
+    global graphiti_worker
+    
+    if graphiti_worker:
+        await graphiti_worker.stop()
+        
+        # Wait for queue to drain (with timeout)
+        try:
+            await asyncio.wait_for(graphiti_worker.queue.join(), timeout=30.0)
+        except asyncio.TimeoutError:
+            logger.warning('Queue did not drain within timeout, forcing shutdown')
+    
+    logger.info('Application shutdown complete')
 
 
 def _migrate_sqlite_memories_table() -> None:
