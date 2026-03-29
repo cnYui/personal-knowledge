@@ -3,7 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app, graphiti_worker
+from app.main import app
+from app import dependencies
 
 
 @pytest.fixture
@@ -17,7 +18,7 @@ def mock_worker():
 @pytest.fixture
 def client_with_worker(mock_worker, monkeypatch):
     """Create test client with mocked worker."""
-    monkeypatch.setattr('app.main.graphiti_worker', mock_worker)
+    monkeypatch.setattr('app.dependencies.graphiti_worker', mock_worker)
     return TestClient(app)
 
 
