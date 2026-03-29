@@ -14,8 +14,9 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "password"
 
-    # OpenAI (for Graphiti)
+    # OpenAI (for Graphiti) - StepFun API compatible
     openai_api_key: str = ""
+    openai_base_url: str = "https://api.stepfun.com/v1"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
