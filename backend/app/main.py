@@ -4,10 +4,14 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.database import init_db
+from app.core.database import SessionLocal, init_db
 from app.routers.chat import router as chat_router
+from app.routers.graph import router as graph_router
 from app.routers.memories import router as memories_router
+from app.routers.prompts import router as prompts_router
+from app.services.memory_service import MemoryService
 from app.routers.uploads import router as uploads_router
+from app.routers.text_optimization import router as text_router
 from app.workers import GraphitiIngestWorker
 from app.workers.title_generation_worker import title_generation_worker
 from app import dependencies
@@ -31,8 +35,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(chat_router)
+app.include_router(graph_router)
 app.include_router(memories_router)
+app.include_router(prompts_router)
 app.include_router(uploads_router)
+app.include_router(text_router)
 
 
 @app.on_event('startup')
@@ -40,7 +47,15 @@ async def startup_event():
     """Initialize and start workers on application startup."""
     # Start Graphiti ingest worker
     dependencies.graphiti_worker = GraphitiIngestWorker()
-    asyncio.create_task(dependencies.graphiti_worker.start())
+    await dependencies.graphiti_worker.start()
+
+    memory_service = MemoryService()
+    db = SessionLocal()
+    try:
+        recovered_count = await memory_service.recover_pending_graph_tasks(db, dependencies.graphiti_worker)
+        logger.info('Startup graph pending recovery finished: recovered_count=%s', recovered_count)
+    finally:
+        db.close()
     
     # Start title generation worker
     await title_generation_worker.start()

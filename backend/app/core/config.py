@@ -14,9 +14,20 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "password"
 
-    # OpenAI (for Graphiti) - StepFun API compatible
+    # Graph extraction LLM provider
+    graph_llm_provider: str = "deepseek"
+
+    # OpenAI-compatible settings (legacy StepFun compatible)
     openai_api_key: str = ""
     openai_base_url: str = "https://api.stepfun.com/v1"
+
+    # DeepSeek API settings
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    deepseek_model: str = "deepseek-chat"
+
+    # Relationship text deduplication (semantic near-duplicate filtering)
+    graph_relation_dedup_threshold: float = 0.93
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

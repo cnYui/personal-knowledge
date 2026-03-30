@@ -13,14 +13,6 @@ export interface MemoryGateway {
   addToKnowledgeGraph(memory: Memory): Promise<void>
 }
 
-type TemporalGraphMemoryPayload = {
-  memory_id: string
-  title: string
-  content: string
-  updated_at: string | null
-  group_id: string
-}
-
 type MemoryGatewayMode = 'mock' | 'temporal'
 
 let memoryStore: Memory[] = [...mockMemories]
@@ -75,16 +67,6 @@ export const mockMemoryGateway: MemoryGateway = {
   },
 }
 
-function toTemporalGraphPayload(memory: Memory): TemporalGraphMemoryPayload {
-  return {
-    memory_id: memory.id,
-    title: memory.title,
-    content: memory.content,
-    updated_at: memory.updated_at ?? null,
-    group_id: import.meta.env.VITE_MEMORY_GROUP_ID ?? 'default',
-  }
-}
-
 export const temporalGraphGateway: MemoryGateway = {
   async listMemories(params) {
     const { data } = await http.get<Memory[]>('/api/memories', {
@@ -105,8 +87,7 @@ export const temporalGraphGateway: MemoryGateway = {
   },
 
   async addToKnowledgeGraph(memory) {
-    const payload = toTemporalGraphPayload(memory)
-    await http.post('/api/temporal-graph/memories', payload)
+    await http.post(`/api/memories/${memory.id}/add-to-graph`)
   },
 }
 

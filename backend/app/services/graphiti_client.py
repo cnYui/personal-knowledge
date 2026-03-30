@@ -1,5 +1,7 @@
 import logging
+import re
 from datetime import datetime
+from difflib import SequenceMatcher
 
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodeType
@@ -17,13 +19,23 @@ class GraphitiClient:
     """Wrapper for Graphiti SDK to manage knowledge graph operations."""
 
     def __init__(self):
-        # Configure LLM client to use StepFun API (custom client for compatibility)
+        provider = settings.graph_llm_provider.lower().strip()
+        if provider == 'deepseek':
+            api_key = settings.deepseek_api_key or settings.openai_api_key
+            base_url = settings.deepseek_base_url
+            model = settings.deepseek_model
+        else:
+            api_key = settings.openai_api_key
+            base_url = settings.openai_base_url
+            model = 'step-1-8k'
+
+        # Configure LLM client (OpenAI-compatible API)
         llm_config = LLMConfig(
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url,
-            model='step-1-8k',  # StepFun model for medium tasks
-            small_model='step-1-8k',  # StepFun doesn't have a separate small model
-            max_tokens=2048,  # Reduced to fit within step-1-8k's 8192 token limit
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            small_model=model,
+            max_tokens=2048,
         )
         llm_client = StepFunLLMClient(config=llm_config)
 
@@ -33,11 +45,11 @@ class GraphitiClient:
         )
         embedder = LocalEmbedder(config=embedder_config)
 
-        # Configure CrossEncoder (Reranker) to use StepFun API
+        # Configure CrossEncoder (Reranker) with the same provider
         reranker_config = LLMConfig(
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url,
-            model='step-1-8k',  # StepFun model
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
         )
         cross_encoder = OpenAIRerankerClient(config=reranker_config)
 
@@ -49,7 +61,8 @@ class GraphitiClient:
             embedder=embedder,
             cross_encoder=cross_encoder,
         )
-        logger.info('GraphitiClient initialized with StepFun API and local embedder')
+        self.relation_dedup_threshold = min(max(settings.graph_relation_dedup_threshold, 0.0), 1.0)
+        logger.info('GraphitiClient initialized with provider=%s, model=%s, base_url=%s', provider, model, base_url)
 
     async def add_memory_episode(
         self,
@@ -90,6 +103,92 @@ class GraphitiClient:
         logger.info(f'Memory {memory_id} added to graph as episode {episode_uuid}')
 
         return episode_uuid
+
+    async def search(self, query: str, group_id: str = 'default', limit: int = 5):
+        """
+        Search the knowledge graph for relevant information.
+
+        Args:
+            query: Search query
+            group_id: Group identifier for partitioning
+            limit: Maximum number of results to return
+
+        Returns:
+            List of EntityEdge objects from Graphiti
+        """
+        logger.info(f'GraphitiClient.search() called')
+        logger.info(f'  Query: "{query}"')
+        logger.info(f'  Group ID: {group_id}')
+        logger.info(f'  Limit: {limit}')
+
+        try:
+            results = await self.client.search(
+                query=query,
+                group_ids=[group_id],
+                num_results=limit,
+            )
+            deduped_results = self._dedupe_edges_by_fact_similarity(results)
+
+            logger.info(
+                'GraphitiClient.search() completed: raw=%s deduped=%s removed=%s threshold=%.2f',
+                len(results),
+                len(deduped_results),
+                len(results) - len(deduped_results),
+                self.relation_dedup_threshold,
+            )
+
+            # Log details of each edge
+            for i, edge in enumerate(deduped_results):
+                logger.debug(f'Edge {i+1}:')
+                if hasattr(edge, 'fact'):
+                    logger.debug(f'  Fact: {edge.fact[:100]}...')
+                if hasattr(edge, 'source_node') and edge.source_node:
+                    logger.debug(f'  Source: {edge.source_node.name if hasattr(edge.source_node, "name") else "N/A"}')
+                if hasattr(edge, 'target_node') and edge.target_node:
+                    logger.debug(f'  Target: {edge.target_node.name if hasattr(edge.target_node, "name") else "N/A"}')
+
+            return deduped_results
+
+        except Exception as e:
+            logger.error(f'GraphitiClient.search() failed: {e}', exc_info=True)
+            raise
+
+    def _normalize_relation_fact(self, fact: str) -> str:
+        normalized = fact.lower().strip()
+        normalized = re.sub(r'[，。！？、；：,.!?;:()（）\[\]【】{}"“”‘’`]', ' ', normalized)
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        return normalized
+
+    def _relation_similarity(self, fact_a: str, fact_b: str) -> float:
+        normalized_a = self._normalize_relation_fact(fact_a)
+        normalized_b = self._normalize_relation_fact(fact_b)
+        if not normalized_a or not normalized_b:
+            return 0.0
+        if normalized_a == normalized_b:
+            return 1.0
+        return SequenceMatcher(None, normalized_a, normalized_b).ratio()
+
+    def _dedupe_edges_by_fact_similarity(self, edges):
+        deduped_edges = []
+        kept_facts: list[str] = []
+
+        for edge in edges:
+            fact = edge.fact.strip() if hasattr(edge, 'fact') and edge.fact else ''
+            if not fact:
+                deduped_edges.append(edge)
+                continue
+
+            is_duplicate = any(
+                self._relation_similarity(fact, existing_fact) >= self.relation_dedup_threshold
+                for existing_fact in kept_facts
+            )
+            if is_duplicate:
+                continue
+
+            kept_facts.append(fact)
+            deduped_edges.append(edge)
+
+        return deduped_edges
 
     async def close(self):
         """Close the Graphiti client connection."""

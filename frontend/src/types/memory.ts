@@ -15,6 +15,10 @@ export interface Memory {
   created_at?: string | null
   updated_at?: string | null
   images?: MemoryImage[]
+  graph_status?: 'not_added' | 'pending' | 'added' | 'failed' | null
+  graph_error?: string | null
+  graph_added_at?: string | null
+  graph_episode_uuid?: string | null
 }
 
 export interface MemoryPayload {

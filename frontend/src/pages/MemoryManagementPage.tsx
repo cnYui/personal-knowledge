@@ -1,10 +1,10 @@
-import { Alert, Snackbar, Stack, Typography } from '@mui/material'
+import { Alert, Box, Snackbar, Stack, Typography } from '@mui/material'
+import { AxiosError } from 'axios'
 import { useMemo, useState } from 'react'
 
 import { ConfirmDialog } from '../components/common/ConfirmDialog'
 import { ErrorState } from '../components/common/ErrorState'
 import { LoadingState } from '../components/common/LoadingState'
-import { PageHeader } from '../components/common/PageHeader'
 import { MemoryBubbleList } from '../components/memory/MemoryBubbleList'
 import { MemoryDetailDialog } from '../components/memory/MemoryDetailDialog'
 import { MemoryEditDialog } from '../components/memory/MemoryEditDialog'
@@ -16,6 +16,22 @@ import {
   useUpdateMemory,
 } from '../hooks/useMemories'
 import { Memory } from '../types/memory'
+
+function resolveAddToGraphErrorMessage(error: unknown) {
+  if (error instanceof AxiosError) {
+    const detail = (error.response?.data as { detail?: string } | undefined)?.detail
+    const message = detail || error.message || ''
+    const normalized = message.toLowerCase()
+    if (normalized.includes('rate limit') || normalized.includes('429') || normalized.includes('too many requests')) {
+      return 'Rate limit exceeded（上游模型限流，请稍后重试）'
+    }
+    if (message) {
+      return message
+    }
+  }
+
+  return '加入失败，请稍后重试'
+}
 
 export function MemoryManagementPage() {
   const [keyword, setKeyword] = useState('')
@@ -37,15 +53,18 @@ export function MemoryManagementPage() {
   if (isError) return <ErrorState message="记忆加载失败" />
 
   return (
-    <Stack spacing={3}>
-      <PageHeader title="记忆管理" description="浏览、搜索、编辑和删除你的学习记忆。" />
-      {updateMutation.isError || deleteMutation.isError ? (
-        <Alert severity="error">操作失败，请稍后重试。</Alert>
-      ) : null}
-      <MemoryFilterBar keyword={keyword} onKeywordChange={setKeyword} />
-      {empty ? <Typography color="text.secondary">当前没有匹配的记忆。</Typography> : null}
+    <Box sx={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', pr: 1 }}>
+        <Stack spacing={3}>
+          {updateMutation.isError || deleteMutation.isError ? (
+            <Alert severity="error">操作失败，请稍后重试。</Alert>
+          ) : null}
+          <MemoryFilterBar keyword={keyword} onKeywordChange={setKeyword} />
+          {empty ? <Typography color="text.secondary">当前没有匹配的记忆。</Typography> : null}
 
-      <MemoryBubbleList memories={data} onSelect={setSelectedMemory} />
+          <MemoryBubbleList memories={data} onSelect={setSelectedMemory} />
+        </Stack>
+      </Box>
 
       <MemoryDetailDialog
         memory={selectedMemory}
@@ -61,9 +80,9 @@ export function MemoryManagementPage() {
         onAddToGraph={async (memory) => {
           try {
             await addToGraphMutation.mutateAsync(memory)
-            setFeedback({ open: true, message: '已加入知识图谱（模拟）' })
-          } catch {
-            setFeedback({ open: true, message: '加入失败，请稍后重试' })
+            setFeedback({ open: true, message: '已加入知识图谱处理队列，正在构建中...' })
+          } catch (error) {
+            setFeedback({ open: true, message: resolveAddToGraphErrorMessage(error) })
           }
         }}
       />
@@ -108,6 +127,6 @@ export function MemoryManagementPage() {
         }}
         message={feedback.message}
       />
-    </Stack>
+    </Box>
   )
 }

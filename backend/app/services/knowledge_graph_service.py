@@ -1,25 +1,250 @@
 """Knowledge Graph Service for querying the Graphiti knowledge graph."""
 
+from collections.abc import AsyncGenerator
+from inspect import isawaitable
+import logging
+
+from openai import AsyncOpenAI
+
+from app.core.config import settings
+from app.schemas.agent import GraphRetrievalResult
+from app.schemas.chat import ChatReference
+from app.services.graphiti_client import GraphitiClient
+
+logger = logging.getLogger(__name__)
+
 
 class KnowledgeGraphService:
     """Service for interacting with the knowledge graph for search and retrieval."""
-    
+
     def __init__(self):
         """Initialize the knowledge graph service."""
-        pass
-    
-    def ask(self, query: str) -> dict:
+        self.graphiti_client = GraphitiClient()
+        self.llm_client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+        )
+        logger.info('KnowledgeGraphService initialized')
+
+    def _build_answer_request(self, query: str, retrieval_result: GraphRetrievalResult) -> dict:
+        """Build the shared LLM request payload for graph-grounded answers."""
+        system_prompt = """你是一个知识助手，必须基于给定证据回答问题。
+如果证据不足，明确说明，不允许编造。请用中文回答。"""
+
+        user_prompt = (
+            f'【知识图谱上下文】\n{retrieval_result.context}\n\n'
+            f'【用户问题】\n{query}\n\n'
+            '请基于上述上下文回答问题。'
+        )
+
+        return {
+            'model': 'step-1-8k',
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_prompt},
+            ],
+            'max_tokens': 1024,
+            'temperature': 0.3,
+        }
+
+    async def retrieve_graph_context(self, query: str, group_id: str = 'default') -> GraphRetrievalResult:
+        """Retrieve graph evidence and normalize it into a structured result."""
+        edges = await self.graphiti_client.search(query, group_id=group_id, limit=5)
+
+        context_parts: list[str] = []
+        references: list[ChatReference] = []
+
+        for edge in edges:
+            if getattr(edge, 'fact', None):
+                context_parts.append(f'关系: {edge.fact}')
+                references.append(ChatReference(type='relationship', fact=edge.fact))
+
+            for attr in ('source_node', 'target_node'):
+                node = getattr(edge, attr, None)
+                if node and getattr(node, 'name', None) and getattr(node, 'summary', None):
+                    context_parts.append(f'实体: {node.name}\n描述: {node.summary}')
+                    references.append(ChatReference(type='entity', name=node.name, summary=node.summary))
+
+        if not context_parts:
+            return GraphRetrievalResult(
+                context='',
+                references=[],
+                has_enough_evidence=False,
+                empty_reason='图谱中没有足够信息',
+                retrieved_edge_count=0,
+                group_id=group_id,
+            )
+
+        return GraphRetrievalResult(
+            context='\n\n'.join(context_parts),
+            references=references,
+            has_enough_evidence=True,
+            empty_reason='',
+            retrieved_edge_count=len(edges),
+            group_id=group_id,
+        )
+
+    async def answer_with_context(self, query: str, retrieval_result: GraphRetrievalResult) -> dict:
+        """Generate an answer from a precomputed retrieval result."""
+        if not retrieval_result.has_enough_evidence:
+            return {
+                'answer': '抱歉，我在知识图谱中没有找到足够相关的信息。',
+                'references': retrieval_result.references,
+            }
+
+        response = self.llm_client.chat.completions.create(
+            **self._build_answer_request(query, retrieval_result)
+        )
+        if isawaitable(response):
+            response = await response
+        answer = response.choices[0].message.content
+        return {'answer': answer, 'references': retrieval_result.references}
+
+    async def answer_with_context_stream(
+        self, query: str, retrieval_result: GraphRetrievalResult
+    ) -> AsyncGenerator[dict, None]:
+        """Stream answer chunks from a precomputed retrieval result."""
+        if not retrieval_result.has_enough_evidence:
+            yield {
+                'type': 'content',
+                'content': '抱歉，我在知识图谱中没有找到足够相关的信息。',
+            }
+            yield {'type': 'done', 'content': ''}
+            return
+
+        request_kwargs = self._build_answer_request(query, retrieval_result)
+        stream = self.llm_client.chat.completions.create(
+            **request_kwargs,
+            stream=True,
+        )
+        if isawaitable(stream):
+            stream = await stream
+
+        if hasattr(stream, '__aiter__'):
+            async for chunk in stream:
+                content = chunk.choices[0].delta.content
+                if content:
+                    yield {'type': 'content', 'content': content}
+        else:
+            for chunk in stream:
+                content = chunk.choices[0].delta.content
+                if content:
+                    yield {'type': 'content', 'content': content}
+
+        yield {'type': 'done', 'content': ''}
+
+    async def ask(self, query: str, group_id: str = 'default') -> dict:
         """
-        Query the knowledge graph and return relevant information.
-        
+        Query the knowledge graph and return relevant information using RAG.
+
         Args:
             query: The user's question or search query
-            
+            group_id: Group identifier for partitioning
+
         Returns:
             Dictionary with 'answer' and 'references' keys
         """
-        # Stub implementation - to be implemented in future tasks
-        return {
-            'answer': 'Knowledge graph service not yet implemented',
-            'references': [],
-        }
+        logger.info(f'=== RAG Query Start ===')
+        logger.info(f'Query: "{query}"')
+        logger.info(f'Group ID: {group_id}')
+
+        retrieval_result = GraphRetrievalResult(context='', group_id=group_id)
+
+        try:
+            logger.info('Step 1: Searching knowledge graph...')
+            retrieval_result = await self.retrieve_graph_context(query, group_id=group_id)
+            logger.info(
+                'Step 1 Complete: Found %s edges from knowledge graph',
+                retrieval_result.retrieved_edge_count,
+            )
+            logger.info(
+                'Step 2 Complete: Extracted %s references, evidence=%s',
+                len(retrieval_result.references),
+                retrieval_result.has_enough_evidence,
+            )
+
+            if retrieval_result.has_enough_evidence:
+                logger.info(f'Step 3: Built context ({len(retrieval_result.context)} characters)')
+                logger.debug(f'Context preview: {retrieval_result.context[:200]}...')
+            else:
+                logger.warning('No context found in knowledge graph!')
+
+            logger.info('Step 4: Calling answer generation...')
+            result = await self.answer_with_context(query, retrieval_result)
+            logger.info(f'Step 4 Complete: Generated answer ({len(result["answer"])} characters)')
+            logger.debug(f'Answer preview: {result["answer"][:100]}...')
+
+            logger.info(f'=== RAG Query End (Success) ===')
+            logger.info(f'Total references: {len(retrieval_result.references)}')
+
+            return result
+
+        except Exception as e:
+            logger.error(f'=== RAG Query End (Error) ===')
+            logger.error(f'Error in RAG query: {e}', exc_info=True)
+            return {
+                'answer': f'抱歉，处理您的问题时出现错误：{str(e)}',
+                'references': retrieval_result.references,
+            }
+
+    async def ask_stream(self, query: str, group_id: str = 'default'):
+        """
+        Query the knowledge graph and stream the response.
+
+        Args:
+            query: The user's question or search query
+            group_id: Group identifier for partitioning
+
+        Yields:
+            Dictionary chunks with type and content
+        """
+        logger.info(f'=== RAG Stream Query Start ===')
+        logger.info(f'Query: "{query}"')
+        logger.info(f'Group ID: {group_id}')
+
+        try:
+            logger.info('Step 1: Searching knowledge graph...')
+            retrieval_result = await self.retrieve_graph_context(query, group_id=group_id)
+            logger.info(
+                'Step 1 Complete: Found %s edges from knowledge graph',
+                retrieval_result.retrieved_edge_count,
+            )
+            logger.info(
+                'Step 2 Complete: Extracted %s references, evidence=%s',
+                len(retrieval_result.references),
+                retrieval_result.has_enough_evidence,
+            )
+
+            logger.info('Step 3: Sending references to client...')
+            yield {'type': 'references', 'content': [reference.model_dump() for reference in retrieval_result.references]}
+
+            if not retrieval_result.has_enough_evidence:
+                logger.warning('No context found in knowledge graph!')
+                yield {
+                    'type': 'content',
+                    'content': '抱歉，我在知识图谱中没有找到足够相关的信息。',
+                }
+                yield {'type': 'done', 'content': ''}
+                logger.info('=== RAG Stream Query End (No Results) ===')
+                return
+
+            logger.info(f'Step 4: Built context ({len(retrieval_result.context)} characters)')
+            logger.debug(f'Context preview: {retrieval_result.context[:200]}...')
+            logger.info('Step 5: Starting LLM streaming...')
+
+            chunk_count = 0
+            async for chunk in self.answer_with_context_stream(query, retrieval_result):
+                if chunk['type'] == 'content':
+                    chunk_count += 1
+                yield chunk
+
+            logger.info(f'Step 5 Complete: Streamed {chunk_count} content chunks')
+
+            logger.info(f'=== RAG Stream Query End (Success) ===')
+            logger.info(f'Total references: {len(retrieval_result.references)}')
+
+        except Exception as e:
+            logger.error(f'=== RAG Stream Query End (Error) ===')
+            logger.error(f'Error in streaming RAG: {e}', exc_info=True)
+            yield {'type': 'error', 'content': str(e)}
+

@@ -9,3 +9,11 @@ __pycache__/
 .env
 backend/uploads/
 app.db
+test.db
+.tmp-playwright/
+backend/.vendor/
+backend/pip/
+backend/.pip-temp/
+backend/*.log
+frontend/*.log
+frontend/tsconfig.tsbuildinfo

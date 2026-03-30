@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.repositories.memory_repository import MemoryRepository
 from app.schemas.memory import MemoryCreate, MemoryUpdate
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryService:
@@ -23,6 +27,18 @@ class MemoryService:
 
     def update_memory(self, db: Session, memory_id: str, payload: MemoryUpdate):
         memory = self.get_memory(db, memory_id)
+        payload_data = payload.model_dump(exclude_none=True)
+        edited_title = payload_data.get('title')
+        edited_content = payload_data.get('content')
+        has_graph_relevant_change = edited_title != memory.title or edited_content != memory.content
+
+        if has_graph_relevant_change:
+            memory.graph_status = 'not_added'
+            memory.graph_error = None
+            memory.graph_episode_uuid = None
+            memory.graph_added_at = None
+            logger.info('Memory %s edited; graph status reset to not_added', memory_id)
+
         return self.repository.update(db, memory, payload)
 
     def delete_memory(self, db: Session, memory_id: str) -> None:
@@ -42,19 +58,31 @@ class MemoryService:
             Updated memory object
             
         Raises:
-            HTTPException: If memory not found or invalid state
+            HTTPException: If memory not found
         """
         memory = self.get_memory(db, memory_id)
         
+        # Pending with active retry keeps idempotent behavior; added supports re-submit.
         if memory.graph_status == 'pending':
-            raise HTTPException(status_code=400, detail='Memory is already queued')
+            has_retry_meta = bool(memory.graph_error and memory.graph_error.startswith('__retry__:'))
+            if has_retry_meta:
+                logger.info('Memory %s is pending with active retry metadata; skip re-queue', memory_id)
+                return memory
+
+            logger.warning('Memory %s is pending but no retry metadata; treat as zombie and re-enqueue', memory_id)
+            await worker.enqueue(memory_id)
+            logger.info('Memory %s zombie pending task re-enqueued', memory_id)
+            return memory
         if memory.graph_status == 'added':
-            raise HTTPException(status_code=400, detail='Memory already in graph')
+            logger.info('Memory %s already in graph; re-submit with soft overwrite mode', memory_id)
         
         memory.graph_status = 'pending'
+        memory.graph_error = None
         db.commit()
+        logger.info('Memory %s status set to pending; queued for graph ingestion', memory_id)
         
         await worker.enqueue(memory_id)
+        logger.info('Memory %s enqueue request submitted to GraphitiIngestWorker', memory_id)
         
         return memory
 
@@ -79,11 +107,12 @@ class MemoryService:
             memory = self.get_memory(db, memory_id)
             memories.append(memory)
         
-        # Filter out already pending or added
+        # Filter out active pending; include added for re-submit
         to_queue = []
         for memory in memories:
-            if memory.graph_status not in ['pending', 'added']:
+            if memory.graph_status != 'pending':
                 memory.graph_status = 'pending'
+                memory.graph_error = None
                 to_queue.append(memory.id)
         
         db.commit()
@@ -91,8 +120,54 @@ class MemoryService:
         # Enqueue all
         for memory_id in to_queue:
             await worker.enqueue(memory_id)
+            logger.info('Batch enqueue memory %s for graph ingestion', memory_id)
         
+        logger.info('Batch add-to-graph queued_count=%s memory_ids=%s', len(to_queue), to_queue)
         return {
             'queued_count': len(to_queue),
             'memory_ids': to_queue,
         }
+
+    async def recover_pending_graph_tasks(self, db: Session, worker) -> int:
+        """Recover pending graph tasks on startup by re-enqueuing them.
+
+        Since worker queues are in-memory, backend restarts can leave DB records in
+        ``pending`` without actual queue items. This routine re-queues pending records
+        so ingestion can continue automatically after restart.
+        """
+        memories = self.repository.list(db)
+        pending_memories = [memory for memory in memories if memory.graph_status == 'pending']
+
+        if not pending_memories:
+            logger.info('Startup graph recovery: no pending memories found')
+            return 0
+
+        recovered_ids: list[str] = []
+        failed_recovery_ids: list[str] = []
+
+        for memory in pending_memories:
+            try:
+                await worker.enqueue(memory.id)
+                recovered_ids.append(memory.id)
+            except Exception as error:
+                memory.graph_status = 'failed'
+                memory.graph_error = f'Startup recovery failed: {error}'
+                failed_recovery_ids.append(memory.id)
+                logger.error(
+                    'Startup graph recovery failed to enqueue memory %s: %s',
+                    memory.id,
+                    error,
+                    exc_info=True,
+                )
+
+        if failed_recovery_ids:
+            db.commit()
+
+        logger.warning(
+            'Startup graph recovery complete: recovered=%s failed=%s pending_ids=%s',
+            len(recovered_ids),
+            len(failed_recovery_ids),
+            recovered_ids,
+        )
+
+        return len(recovered_ids)
