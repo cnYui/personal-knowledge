@@ -243,7 +243,151 @@ export function ThinkingProcess({ timelineEvents, trace, active = false }: Think
         />
       </Box>
 
-      {/* 展开内容将在下一个任务实现 */}
+      <Collapse in={expanded} timeout={200}>
+        <Box
+          sx={{
+            mt: 1,
+            position: 'relative',
+            pl: 2.25,
+            '&:before': {
+              content: '""',
+              position: 'absolute',
+              left: 9,
+              top: 6,
+              bottom: 6,
+              width: 1.5,
+              borderRadius: 0.5,
+              background: 'linear-gradient(180deg, rgba(176,174,165,0.4) 0%, rgba(176,174,165,0.12) 100%)',
+            },
+          }}
+        >
+          <Stack spacing={1.2}>
+            {timeline.map((step) => {
+              const isCurrent = step.status === 'current'
+              const isDone = step.status === 'done'
+              const isError = step.status === 'error'
+              const stepDetail = step.placeholder && step.key === currentStep.key ? currentDetail : step.detail
+              const previewOverflow =
+                step.previewTotal && step.previewItems?.length
+                  ? Math.max(step.previewTotal - step.previewItems.length, 0)
+                  : 0
+
+              return (
+                <Box key={step.key} sx={{ position: 'relative', pl: 1.25 }}>
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      left: -16,
+                      top: 4,
+                      width: 14,
+                      height: 14,
+                      borderRadius: '50%',
+                      display: 'grid',
+                      placeItems: 'center',
+                      bgcolor: isCurrent ? 'rgba(217,119,87,0.12)' : 'rgba(255,253,248,0.95)',
+                      color: isError ? 'error.main' : isCurrent ? 'secondary.main' : 'rgba(111,106,97,0.9)',
+                      border: '1px solid rgba(176, 174, 165, 0.2)',
+                      boxShadow: isCurrent ? '0 0 0 6px rgba(217,119,87,0.08)' : 'none',
+                    }}
+                  >
+                    {isDone ? (
+                      <CheckCircleRoundedIcon sx={{ fontSize: 12 }} />
+                    ) : (
+                      <MoreHorizRoundedIcon
+                        sx={{
+                          fontSize: 12,
+                          '@keyframes thinkingDotShift': {
+                            '0%': { opacity: 0.55, transform: 'translateX(-1px)' },
+                            '100%': { opacity: 1, transform: 'translateX(1px)' },
+                          },
+                          animation: isCurrent ? 'thinkingDotShift 0.7s ease-in-out infinite alternate' : 'none',
+                        }}
+                      />
+                    )}
+                  </Box>
+
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.3, flexWrap: 'wrap' }}>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        fontWeight: 700,
+                        color: isError ? 'error.main' : isCurrent ? 'secondary.main' : 'text.secondary',
+                        letterSpacing: '0.08em',
+                      }}
+                    >
+                      {step.label}
+                    </Typography>
+                    {isCurrent ? (
+                      <Chip
+                        size="small"
+                        label="处理中"
+                        sx={{
+                          height: 20,
+                          bgcolor: 'rgba(217,119,87,0.1)',
+                          color: 'secondary.main',
+                          border: '1px solid rgba(217,119,87,0.16)',
+                        }}
+                      />
+                    ) : isError ? (
+                      <Chip
+                        size="small"
+                        label="失败"
+                        sx={{
+                          height: 20,
+                          bgcolor: 'rgba(211, 47, 47, 0.1)',
+                          color: 'error.main',
+                          border: '1px solid rgba(211, 47, 47, 0.2)',
+                        }}
+                      />
+                    ) : null}
+                  </Stack>
+
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: isError ? 'error.main' : isCurrent ? 'text.primary' : 'text.secondary',
+                      lineHeight: 1.7,
+                    }}
+                  >
+                    {stepDetail}
+                  </Typography>
+                  {step.previewItems?.length ? (
+                    <Stack direction="row" spacing={0.75} sx={{ mt: 0.9, flexWrap: 'wrap' }}>
+                      {step.previewItems.map((item) => (
+                        <Chip
+                          key={`${step.key}-${item}`}
+                          size="small"
+                          label={item}
+                          variant="outlined"
+                          sx={{
+                            height: 24,
+                            mb: 0.6,
+                            borderColor: 'rgba(217,119,87,0.18)',
+                            bgcolor: 'rgba(255,253,248,0.72)',
+                            color: 'text.secondary',
+                          }}
+                        />
+                      ))}
+                      {previewOverflow > 0 ? (
+                        <Chip
+                          size="small"
+                          label={`+${previewOverflow} 条证据`}
+                          sx={{
+                            height: 24,
+                            mb: 0.6,
+                            bgcolor: 'rgba(232, 230, 220, 0.8)',
+                            color: 'text.secondary',
+                          }}
+                        />
+                      ) : null}
+                    </Stack>
+                  ) : null}
+                </Box>
+              )
+            })}
+          </Stack>
+        </Box>
+      </Collapse>
     </Box>
   )
 }
