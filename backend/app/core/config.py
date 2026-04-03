@@ -18,19 +18,6 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "password"
 
-    # Graph extraction LLM provider
-    graph_llm_provider: str = "deepseek"
-
-    # OpenAI-compatible settings (legacy StepFun compatible)
-    openai_api_key: str = ""
-    openai_base_url: str = "https://api.stepfun.com/v1"
-    openai_model: str = "step-1-8k"
-
-    # DeepSeek API settings
-    deepseek_api_key: str = ""
-    deepseek_base_url: str = "https://api.deepseek.com/v1"
-    deepseek_model: str = "deepseek-chat"
-
     # Runtime model routing
     dialog_provider: str = "deepseek"
     dialog_api_key: str = ""

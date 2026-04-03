@@ -5,10 +5,9 @@ def test_env_store_updates_existing_keys_and_appends_missing_ones(tmp_path):
     env_path = tmp_path / '.env'
     env_path.write_text(
         '# Example env\n'
-        'OPENAI_API_KEY=old-openai\n'
         'DIALOG_API_KEY=old-dialog\n'
         '\n'
-        'DEEPSEEK_API_KEY=old-deepseek\n',
+        'DIALOG_MODEL=deepseek-chat\n',
         encoding='utf-8',
     )
 
@@ -21,10 +20,9 @@ def test_env_store_updates_existing_keys_and_appends_missing_ones(tmp_path):
 
     assert env_path.read_text(encoding='utf-8') == (
         '# Example env\n'
-        'OPENAI_API_KEY=old-openai\n'
         'DIALOG_API_KEY=new-dialog\n'
         '\n'
-        'DEEPSEEK_API_KEY=old-deepseek\n'
+        'DIALOG_MODEL=deepseek-chat\n'
         '\n'
         'KNOWLEDGE_BUILD_API_KEY=new-build\n'
     )

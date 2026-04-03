@@ -51,7 +51,7 @@ This backend integrates [Graphiti](https://github.com/getzep/graphiti), a tempor
 
 - Python 3.12+
 - Docker and Docker Compose
-- OpenAI API key (required by Graphiti for embeddings)
+- Dialog and knowledge-build model API keys
 
 ### 1. Install Dependencies
 
@@ -79,8 +79,9 @@ NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_secure_password
 
-# OpenAI (required by Graphiti)
-OPENAI_API_KEY=sk-your-openai-api-key-here
+# Runtime model configuration
+DIALOG_API_KEY=sk-your-dialog-api-key-here
+KNOWLEDGE_BUILD_API_KEY=sk-your-knowledge-build-api-key-here
 ```
 
 ### 3. Start Neo4j
@@ -233,13 +234,13 @@ curl http://localhost:8000/api/memories?keyword=python
 3. Verify credentials in `.env` match docker-compose.yml
 4. Test connection: `docker exec -it pkb-neo4j cypher-shell -u neo4j -p password`
 
-### OpenAI API Errors
+### Runtime Model API Errors
 
-**Problem:** `OpenAI API key not configured` or `Invalid API key`
+**Problem:** `Model API key not configured` or `Invalid API key`
 
 **Solutions:**
-1. Verify `OPENAI_API_KEY` is set in `.env`
-2. Check API key is valid at https://platform.openai.com/api-keys
+1. Verify `DIALOG_API_KEY` and `KNOWLEDGE_BUILD_API_KEY` are set in `.env`
+2. Check the configured API keys are valid in your model provider console
 3. Ensure you have sufficient credits/quota
 
 ### Memory Stuck in Pending Status
@@ -260,7 +261,7 @@ curl http://localhost:8000/api/memories?keyword=python
 1. Ensure backend server is running (worker starts with server)
 2. Check logs for worker initialization: "GraphitiIngestWorker started"
 3. Verify no exceptions in worker loop
-4. Check Neo4j and OpenAI connectivity
+4. Check Neo4j and model provider connectivity
 
 ## Testing
 

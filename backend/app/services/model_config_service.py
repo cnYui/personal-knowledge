@@ -69,36 +69,20 @@ class ModelConfigService:
 
     def _dialog_defaults(self) -> RuntimeModelConfig:
         provider = (settings.dialog_provider or 'deepseek').strip() or 'deepseek'
-        if provider == 'deepseek':
-            api_key = settings.dialog_api_key or settings.deepseek_api_key
-            base_url = settings.dialog_base_url or settings.deepseek_base_url
-            model = settings.dialog_model or settings.deepseek_model
-        else:
-            api_key = settings.dialog_api_key or settings.openai_api_key
-            base_url = settings.dialog_base_url or settings.openai_base_url
-            model = settings.dialog_model or settings.openai_model
         return RuntimeModelConfig(
             provider=provider,
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
+            api_key=settings.dialog_api_key,
+            base_url=settings.dialog_base_url,
+            model=settings.dialog_model,
         )
 
     def _knowledge_build_defaults(self) -> RuntimeModelConfig:
-        provider = (settings.knowledge_build_provider or settings.graph_llm_provider or 'deepseek').strip() or 'deepseek'
-        if provider == 'deepseek':
-            api_key = settings.knowledge_build_api_key or settings.deepseek_api_key
-            base_url = settings.knowledge_build_base_url or settings.deepseek_base_url
-            model = settings.knowledge_build_model or settings.deepseek_model
-        else:
-            api_key = settings.knowledge_build_api_key or settings.openai_api_key
-            base_url = settings.knowledge_build_base_url or settings.openai_base_url
-            model = settings.knowledge_build_model or settings.openai_model
+        provider = (settings.knowledge_build_provider or 'deepseek').strip() or 'deepseek'
         return RuntimeModelConfig(
             provider=provider,
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
+            api_key=settings.knowledge_build_api_key,
+            base_url=settings.knowledge_build_base_url,
+            model=settings.knowledge_build_model,
         )
 
     def reload(self) -> None:
