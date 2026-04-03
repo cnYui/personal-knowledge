@@ -140,14 +140,13 @@ export function ChatMessageList({
               alignSelf: 'flex-start',
             }}
           >
-            <Typography variant="caption" sx={{ opacity: 0.6, ml: 0.5 }}>
-              AI
-            </Typography>
-            <ThinkingProcess
-              timelineEvents={message.timeline ?? []}
-              trace={message.agentTrace ?? null}
-              active={Boolean(message.isStreaming)}
-            />
+            {(message.isStreaming || message.timeline?.length || message.agentTrace) ? (
+              <ThinkingProcess
+                timelineEvents={message.timeline ?? []}
+                trace={message.agentTrace ?? null}
+                active={Boolean(message.isStreaming)}
+              />
+            ) : null}
             <AssistantContent content={message.content} references={message.references ?? []} />
             {message.references?.length ? <CitationList references={message.references} /> : null}
             {message.isStreaming ? (
