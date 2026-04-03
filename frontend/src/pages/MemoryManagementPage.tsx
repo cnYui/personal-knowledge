@@ -1,7 +1,7 @@
-import { Alert, Box, Snackbar, Stack, Typography } from '@mui/material'
-import { AxiosError } from 'axios'
+import { Alert, Box, Stack, Typography } from '@mui/material'
 import { useMemo, useState } from 'react'
 
+import { useAppToast } from '../components/common/AppToastProvider'
 import { ConfirmDialog } from '../components/common/ConfirmDialog'
 import { ErrorState } from '../components/common/ErrorState'
 import { LoadingState } from '../components/common/LoadingState'
@@ -15,33 +15,29 @@ import {
   useMemories,
   useUpdateMemory,
 } from '../hooks/useMemories'
+import { normalizeApiError } from '../services/apiClient'
 import { Memory } from '../types/memory'
 
 function resolveAddToGraphErrorMessage(error: unknown) {
-  if (error instanceof AxiosError) {
-    const detail = (error.response?.data as { detail?: string } | undefined)?.detail
-    const message = detail || error.message || ''
-    const normalized = message.toLowerCase()
-    if (normalized.includes('rate limit') || normalized.includes('429') || normalized.includes('too many requests')) {
-      return 'Rate limit exceeded（上游模型限流，请稍后重试）'
-    }
-    if (message) {
-      return message
-    }
+  const normalizedError = normalizeApiError(error)
+  const message = normalizedError.details || normalizedError.message || ''
+  const normalized = message.toLowerCase()
+  if (normalized.includes('rate limit') || normalized.includes('429') || normalized.includes('too many requests')) {
+    return 'Rate limit exceeded（上游模型限流，请稍后重试）'
+  }
+  if (message) {
+    return message
   }
 
   return '加入失败，请稍后重试'
 }
 
 export function MemoryManagementPage() {
+  const { showToast } = useAppToast()
   const [keyword, setKeyword] = useState('')
   const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null)
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null)
   const [deletingMemory, setDeletingMemory] = useState<Memory | null>(null)
-  const [feedback, setFeedback] = useState<{ open: boolean; message: string }>({
-    open: false,
-    message: '',
-  })
   const { data = [], isLoading, isError } = useMemories(keyword)
   const updateMutation = useUpdateMemory()
   const deleteMutation = useDeleteMemory()
@@ -80,9 +76,9 @@ export function MemoryManagementPage() {
         onAddToGraph={async (memory) => {
           try {
             await addToGraphMutation.mutateAsync(memory)
-            setFeedback({ open: true, message: '已加入知识图谱处理队列，正在构建中...' })
+            showToast({ severity: 'success', message: '已加入知识图谱处理队列，正在构建中...' })
           } catch (error) {
-            setFeedback({ open: true, message: resolveAddToGraphErrorMessage(error) })
+            showToast({ severity: 'error', message: resolveAddToGraphErrorMessage(error) })
           }
         }}
       />
@@ -99,7 +95,7 @@ export function MemoryManagementPage() {
           await updateMutation.mutateAsync({ id: editingMemory.id, payload })
           setEditingMemory(null)
           setSelectedMemory(null)
-          setFeedback({ open: true, message: '知识已更新' })
+          showToast({ severity: 'success', message: '知识已更新' })
         }}
       />
 
@@ -115,17 +111,8 @@ export function MemoryManagementPage() {
           await deleteMutation.mutateAsync(deletingMemory.id)
           setSelectedMemory(null)
           setDeletingMemory(null)
-          setFeedback({ open: true, message: '知识已删除' })
+          showToast({ severity: 'success', message: '知识已删除' })
         }}
-      />
-
-      <Snackbar
-        open={feedback.open}
-        autoHideDuration={1800}
-        onClose={() => {
-          setFeedback((prev) => ({ ...prev, open: false }))
-        }}
-        message={feedback.message}
       />
     </Box>
   )

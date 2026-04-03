@@ -1,7 +1,9 @@
-import { Alert, Button, Stack, TextField, Box, CircularProgress } from '@mui/material'
+import { Alert, Box, Button, CircularProgress, Paper, Stack, TextField, Typography } from '@mui/material'
 import { useState } from 'react'
 
+import { useAppToast } from '../common/AppToastProvider'
 import { UploadMemoryInput } from '../../types/upload'
+import { normalizeApiError } from '../../services/apiClient'
 import { optimizeText } from '../../services/textApi'
 import { ImageUploadPanel } from './ImageUploadPanel'
 
@@ -12,6 +14,7 @@ export function UploadForm({
   onSubmit: (payload: UploadMemoryInput) => Promise<void>
   loading: boolean
 }) {
+  const { showToast } = useAppToast()
   const [content, setContent] = useState('')
   const [images, setImages] = useState<File[]>([])
   const [error, setError] = useState('')
@@ -33,7 +36,12 @@ export function UploadForm({
       setContent(optimized)
     } catch (err) {
       console.error('[UploadForm] Optimization error:', err)
-      setError('文本优化失败，请稍后重试')
+      const apiError = normalizeApiError(err)
+      setError(apiError.message)
+      showToast({
+        severity: apiError.error_code === 'MODEL_API_KEY_MISSING' ? 'warning' : 'error',
+        message: apiError.message,
+      })
     } finally {
       setOptimizing(false)
     }
@@ -54,24 +62,54 @@ export function UploadForm({
   }
 
   return (
-    <Stack spacing={2}>
-      {error ? <Alert severity="error">{error}</Alert> : null}
-      <Box sx={{ position: 'relative' }}>
-        <TextField label="文本内容" value={content} onChange={(event) => setContent(event.target.value)} multiline minRows={8} fullWidth />
-        <Button
-          variant="outlined"
-          onClick={handleOptimize}
-          disabled={optimizing || loading || !content.trim()}
-          sx={{ position: 'absolute', top: 8, right: 8 }}
-          startIcon={optimizing ? <CircularProgress size={16} /> : null}
-        >
-          {optimizing ? '优化中...' : '一键优化'}
-        </Button>
-      </Box>
-      <ImageUploadPanel files={images} onChange={setImages} />
-      <Button variant="contained" onClick={handleSubmit} disabled={loading}>
-        {loading ? '上传中...' : '上传记忆'}
-      </Button>
-    </Stack>
+    <Paper
+      sx={{
+        p: 3,
+        borderRadius: 4,
+        border: '1px solid',
+        borderColor: 'divider',
+        boxShadow: '0 16px 34px rgba(20, 20, 19, 0.05)',
+        background: 'linear-gradient(180deg, #fffdf8 0%, #f6f2e8 100%)',
+      }}
+    >
+      <Stack spacing={2.5}>
+        <Box>
+          <Typography variant="h6">上传记忆内容</Typography>
+          <Typography variant="body2" color="text.secondary">
+            输入文本、补充图片，然后将整理后的内容写入你的知识库。
+          </Typography>
+        </Box>
+
+        {error ? <Alert severity="error">{error}</Alert> : null}
+
+        <Box sx={{ position: 'relative' }}>
+          <TextField
+            label="文本内容"
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            multiline
+            minRows={8}
+            fullWidth
+          />
+          <Button
+            variant="outlined"
+            onClick={handleOptimize}
+            disabled={optimizing || loading || !content.trim()}
+            sx={{ position: 'absolute', top: 10, right: 10, borderRadius: 999 }}
+            startIcon={optimizing ? <CircularProgress size={16} /> : null}
+          >
+            {optimizing ? '优化中...' : '一键优化'}
+          </Button>
+        </Box>
+
+        <ImageUploadPanel files={images} onChange={setImages} />
+
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button variant="contained" onClick={handleSubmit} disabled={loading} sx={{ minWidth: 132, borderRadius: 999 }}>
+            {loading ? '上传中...' : '上传记忆'}
+          </Button>
+        </Box>
+      </Stack>
+    </Paper>
   )
 }

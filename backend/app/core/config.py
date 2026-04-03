@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ENV_FILE_PATH = Path(__file__).resolve().parents[2] / '.env'
 
 
 class Settings(BaseSettings):
@@ -20,16 +24,35 @@ class Settings(BaseSettings):
     # OpenAI-compatible settings (legacy StepFun compatible)
     openai_api_key: str = ""
     openai_base_url: str = "https://api.stepfun.com/v1"
+    openai_model: str = "step-1-8k"
 
     # DeepSeek API settings
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-chat"
 
+    # Runtime model routing
+    dialog_provider: str = "deepseek"
+    dialog_api_key: str = ""
+    dialog_base_url: str = "https://api.deepseek.com/v1"
+    dialog_model: str = "deepseek-chat"
+    knowledge_build_provider: str = "deepseek"
+    knowledge_build_api_key: str = ""
+    knowledge_build_base_url: str = "https://api.deepseek.com/v1"
+    knowledge_build_model: str = "deepseek-chat"
+
     # Relationship text deduplication (semantic near-duplicate filtering)
     graph_relation_dedup_threshold: float = 0.93
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILE_PATH, extra="ignore")
 
 
 settings = Settings()
+
+
+def refresh_settings() -> Settings:
+    """Reload settings from the backing env file into the shared singleton."""
+    reloaded = Settings()
+    for field_name in Settings.model_fields:
+        setattr(settings, field_name, getattr(reloaded, field_name))
+    return settings

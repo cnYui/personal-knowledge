@@ -17,6 +17,15 @@ test_engine = create_engine(SQLALCHEMY_TEST_DATABASE_URL, connect_args={'check_s
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
 
+def _is_unit_test_without_app_wiring(nodeid: str) -> bool:
+    return (
+        'integration' in nodeid
+        or 'workflow' in nodeid
+        or 'tests/services/' in nodeid
+        or 'tests/core/' in nodeid
+    )
+
+
 def override_get_db():
     try:
         db = TestingSessionLocal()
@@ -28,8 +37,8 @@ def override_get_db():
 @pytest.fixture(scope='session', autouse=True)
 def setup_database(request):
     """Create all database tables before running tests."""
-    # Skip for integration tests which have their own setup
-    if 'integration' in request.node.nodeid:
+    # Skip for pure unit tests which have their own setup needs
+    if _is_unit_test_without_app_wiring(request.node.nodeid):
         yield
         return
     
@@ -41,8 +50,8 @@ def setup_database(request):
 @pytest.fixture(autouse=True)
 def override_dependencies(request):
     """Override FastAPI dependencies to use test database."""
-    # Skip for integration tests which have their own setup
-    if 'integration' in request.node.nodeid:
+    # Skip for pure unit tests which do not need app wiring
+    if _is_unit_test_without_app_wiring(request.node.nodeid):
         yield
         return
         

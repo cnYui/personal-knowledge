@@ -3,12 +3,20 @@ from unittest.mock import Mock, patch
 from app.services.graphiti_client import GraphitiClient
 
 
-def test_graphiti_client_initialization():
+@pytest.mark.anyio
+async def test_graphiti_client_initialization_is_lazy():
     with patch('app.services.graphiti_client.Graphiti') as mock_graphiti:
         client = GraphitiClient()
-        
+
+        assert client.client is None
+
+        async def fake_close():
+            return None
+
+        mock_graphiti.return_value.close = fake_close
+        await client._ensure_runtime_client()
         mock_graphiti.assert_called_once()
-        assert client.client is not None
+        assert client.client is mock_graphiti.return_value
 
 
 
@@ -29,6 +37,7 @@ async def test_add_memory_episode():
             return mock_result
         
         mock_client.add_episode = mock_add_episode
+        mock_client.close = mock_add_episode
         
         client = GraphitiClient()
         

@@ -6,10 +6,11 @@ import logging
 
 from openai import AsyncOpenAI
 
-from app.core.config import settings
+from app.core.model_errors import map_model_api_error, missing_api_key_error
 from app.schemas.agent import GraphRetrievalResult
 from app.schemas.chat import ChatReference
 from app.services.graphiti_client import GraphitiClient
+from app.services.model_config_service import ModelConfigService, model_config_service
 
 logger = logging.getLogger(__name__)
 
@@ -17,17 +18,51 @@ logger = logging.getLogger(__name__)
 class KnowledgeGraphService:
     """Service for interacting with the knowledge graph for search and retrieval."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        graphiti_client: GraphitiClient | None = None,
+        llm_client: AsyncOpenAI | None = None,
+        model_config_service_instance: ModelConfigService | None = None,
+    ):
         """Initialize the knowledge graph service."""
-        self.graphiti_client = GraphitiClient()
-        self.llm_client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url,
+        self.model_config_service = model_config_service_instance or model_config_service
+        self.graphiti_client = graphiti_client or GraphitiClient(
+            model_config_service_instance=self.model_config_service
         )
+        self.llm_client = llm_client
+        self._managed_llm_client = llm_client is None
+        self._dialog_signature: tuple[str, str, str, int] | None = None
+        self._dialog_model = 'deepseek-chat'
         logger.info('KnowledgeGraphService initialized')
+
+    def _ensure_dialog_client(self) -> None:
+        if not getattr(self, '_managed_llm_client', False):
+            return
+
+        config = getattr(self, 'model_config_service', model_config_service).get_dialog_config()
+        signature = (
+            config.provider,
+            config.api_key,
+            config.base_url,
+            getattr(self, 'model_config_service', model_config_service).version,
+        )
+        if getattr(self, 'llm_client', None) is not None and signature == getattr(self, '_dialog_signature', None):
+            return
+
+        if not config.api_key:
+            raise missing_api_key_error(provider=config.provider, purpose='对话模型')
+
+        self.llm_client = AsyncOpenAI(
+            api_key=config.api_key,
+            base_url=config.base_url,
+        )
+        self._dialog_model = config.model
+        self._dialog_signature = signature
 
     def _build_answer_request(self, query: str, retrieval_result: GraphRetrievalResult) -> dict:
         """Build the shared LLM request payload for graph-grounded answers."""
+        self._ensure_dialog_client()
         system_prompt = """你是一个知识助手，必须基于给定证据回答问题。
 如果证据不足，明确说明，不允许编造。请用中文回答。"""
 
@@ -38,7 +73,7 @@ class KnowledgeGraphService:
         )
 
         return {
-            'model': 'step-1-8k',
+            'model': getattr(self, '_dialog_model', 'step-1-8k'),
             'messages': [
                 {'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': user_prompt},
@@ -92,11 +127,16 @@ class KnowledgeGraphService:
                 'references': retrieval_result.references,
             }
 
-        response = self.llm_client.chat.completions.create(
-            **self._build_answer_request(query, retrieval_result)
-        )
-        if isawaitable(response):
-            response = await response
+        try:
+            self._ensure_dialog_client()
+            response = self.llm_client.chat.completions.create(
+                **self._build_answer_request(query, retrieval_result)
+            )
+            if isawaitable(response):
+                response = await response
+        except Exception as error:
+            provider = getattr(self, 'model_config_service', model_config_service).get_dialog_config().provider
+            raise map_model_api_error(error, provider=provider) from error
         answer = response.choices[0].message.content
         return {'answer': answer, 'references': retrieval_result.references}
 
@@ -113,12 +153,17 @@ class KnowledgeGraphService:
             return
 
         request_kwargs = self._build_answer_request(query, retrieval_result)
-        stream = self.llm_client.chat.completions.create(
-            **request_kwargs,
-            stream=True,
-        )
-        if isawaitable(stream):
-            stream = await stream
+        try:
+            self._ensure_dialog_client()
+            stream = self.llm_client.chat.completions.create(
+                **request_kwargs,
+                stream=True,
+            )
+            if isawaitable(stream):
+                stream = await stream
+        except Exception as error:
+            provider = getattr(self, 'model_config_service', model_config_service).get_dialog_config().provider
+            raise map_model_api_error(error, provider=provider) from error
 
         if hasattr(stream, '__aiter__'):
             async for chunk in stream:

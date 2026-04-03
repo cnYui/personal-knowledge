@@ -21,7 +21,7 @@ export function MemoryFilterBar({
     <Stack>
       <TextField
         fullWidth
-        label="搜索标题或内容（按回车搜索）"
+        placeholder="搜索标题或内容（按回车搜索）"
         value={inputValue}
         onChange={(event) => setInputValue(event.target.value)}
         onKeyPress={handleKeyPress}

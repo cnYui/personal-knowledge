@@ -9,7 +9,17 @@ interface NodeDetailPanelProps {
 export function NodeDetailPanel({ node }: NodeDetailPanelProps) {
   if (!node) {
     return (
-      <Paper sx={{ p: 3, height: '100%' }}>
+      <Paper
+        sx={{
+          p: 3,
+          height: '100%',
+          borderRadius: 4,
+          border: '1px solid',
+          borderColor: 'divider',
+          boxShadow: '0 16px 34px rgba(20, 20, 19, 0.05)',
+          background: 'linear-gradient(180deg, #fffdf8 0%, #f6f2e8 100%)',
+        }}
+      >
         <Typography color="text.secondary" textAlign="center">
           点击节点查看详情
         </Typography>
@@ -18,7 +28,18 @@ export function NodeDetailPanel({ node }: NodeDetailPanelProps) {
   }
 
   return (
-    <Paper sx={{ p: 3, height: '100%', overflow: 'auto' }}>
+    <Paper
+      sx={{
+        p: 3,
+        height: '100%',
+        overflow: 'auto',
+        borderRadius: 4,
+        border: '1px solid',
+        borderColor: 'divider',
+        boxShadow: '0 16px 34px rgba(20, 20, 19, 0.05)',
+        background: 'linear-gradient(180deg, #fffdf8 0%, #f6f2e8 100%)',
+      }}
+    >
       <Typography variant="h6" fontWeight={600} gutterBottom>
         {node.label}
       </Typography>

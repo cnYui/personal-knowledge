@@ -1,4 +1,5 @@
 """Local embedder using sentence-transformers for offline embedding generation."""
+import hashlib
 import logging
 from collections.abc import Iterable
 
@@ -33,6 +34,8 @@ class LocalEmbedder(EmbedderClient):
             config = LocalEmbedderConfig()
         
         self.config = config
+        self.model = None
+        self._use_fallback = False
         
         try:
             from sentence_transformers import SentenceTransformer
@@ -40,10 +43,26 @@ class LocalEmbedder(EmbedderClient):
             self.model = SentenceTransformer(config.model_name)
             logger.info('Local embedding model loaded successfully')
         except ImportError:
-            raise ImportError(
-                'sentence-transformers is required for local embeddings. '
-                'Install it with: pip install sentence-transformers'
+            logger.warning(
+                'sentence-transformers is unavailable; falling back to deterministic '
+                'hash-based embeddings for local startup'
             )
+            self._use_fallback = True
+
+    def _fallback_embedding(self, text: str) -> list[float]:
+        """Generate a deterministic placeholder embedding when the model is unavailable."""
+        dimension = self.config.embedding_dim
+        values: list[float] = []
+        seed = text.encode('utf-8')
+
+        while len(values) < dimension:
+            seed = hashlib.sha256(seed).digest()
+            for byte in seed:
+                values.append((byte / 255.0) * 2.0 - 1.0)
+                if len(values) >= dimension:
+                    break
+
+        return values
 
     async def create(
         self, input_data: str | list[str] | Iterable[int] | Iterable[Iterable[int]]
@@ -65,6 +84,9 @@ class LocalEmbedder(EmbedderClient):
             raise ValueError(f'Unsupported input type: {type(input_data)}')
         
         # Generate embedding
+        if self._use_fallback:
+            return self._fallback_embedding(text)
+
         embedding = self.model.encode(text, convert_to_numpy=True)
         
         # Convert to list and truncate to configured dimension
@@ -82,6 +104,9 @@ class LocalEmbedder(EmbedderClient):
             List of embedding vectors
         """
         # Generate embeddings in batch for efficiency
+        if self._use_fallback:
+            return [self._fallback_embedding(text) for text in input_data_list]
+
         embeddings = self.model.encode(input_data_list, convert_to_numpy=True)
         
         # Convert to list and truncate to configured dimension

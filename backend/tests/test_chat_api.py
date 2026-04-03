@@ -1,23 +1,112 @@
-from fastapi.testclient import TestClient
 import json
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
 
 import app.routers.chat as chat_router
 from app.main import app
+from app.core.model_errors import ModelAPIError
 from app.schemas.chat import ChatReference
+
+
+def build_expected_trace(trace: dict, references: list[ChatReference]):
+    def build_label(reference: ChatReference) -> str:
+        if reference.fact:
+            return reference.fact
+        if reference.name and reference.summary:
+            return f'{reference.name}：{reference.summary}'
+        if reference.summary:
+            return reference.summary
+        return reference.name or reference.type
+
+    return {
+        **trace,
+        'canvas': {
+            'execution_path': ['begin', 'agent', 'message'],
+            'events': [
+                {'event': 'node_finished', 'node_id': 'agent', 'node_type': None},
+                {'event': 'node_finished', 'node_id': 'message', 'node_type': None},
+            ],
+        },
+        'tool_loop': {
+            'forced_retrieval': False,
+            'tool_rounds_exceeded': False,
+            'tool_steps': [],
+        },
+        'citation': {
+            'count': len(references),
+            'used_general_fallback': False,
+            'items': [
+                {
+                    'index': index + 1,
+                    'type': reference.type,
+                    'label': build_label(reference),
+                }
+                for index, reference in enumerate(references)
+            ],
+        },
+        'reference_store': {
+            'chunk_count': 0,
+            'doc_count': 0,
+            'graph_evidence_count': len(references),
+        },
+    }
+
+
+def build_stub_canvas(*, answer: str, references: list[ChatReference], trace: dict):
+    graph_evidence = [reference.model_dump() for reference in references]
+
+    class StubReferenceStore:
+        def snapshot(self):
+            return {'chunks': [], 'doc_aggs': [], 'graph_evidence': graph_evidence}
+
+    class StubCanvas:
+        def __init__(self) -> None:
+            self.execution_path = ['begin', 'agent', 'message']
+            self.reference_store = StubReferenceStore()
+
+        async def run(self):
+            yield SimpleNamespace(event='workflow_started', node_id=None, payload={})
+            yield SimpleNamespace(
+                event='node_finished',
+                node_id='agent',
+                payload={
+                    'output': {
+                        'answer': answer,
+                        'references': references,
+                        'agent_trace': trace,
+                    }
+                },
+            )
+            yield SimpleNamespace(
+                event='node_finished',
+                node_id='message',
+                payload={
+                    'output': {
+                        'content': answer,
+                        'references': references,
+                    }
+                },
+            )
+            yield SimpleNamespace(event='workflow_finished', node_id=None, payload={})
+
+    return StubCanvas()
 
 
 def test_send_chat_message_returns_answer_and_persists_messages_via_agent(monkeypatch):
     call_log = []
+    trace = {'mode': 'graph_rag', 'retrieval_rounds': 1, 'final_action': 'kb_grounded_answer', 'steps': []}
+    references = [ChatReference(type='entity', name='向量空间', summary='线性代数中的基本概念')]
 
-    async def fake_ask(message: str, group_id: str = 'default'):
-        call_log.append((message, group_id))
-        return {
-            'answer': '这是代理返回的答案。',
-            'references': [ChatReference(type='entity', name='向量空间', summary='线性代数中的基本概念')],
-            'agent_trace': {'mode': 'graph_rag', 'retrieval_rounds': 1, 'final_action': 'answer', 'steps': []},
-        }
+    def fake_create_chat_canvas(*, query: str, group_id: str = 'default', **kwargs):
+        call_log.append((query, group_id))
+        return build_stub_canvas(
+            answer='这是代理返回的答案。',
+            references=references,
+            trace=trace,
+        )
 
-    monkeypatch.setattr(chat_router.service.agent_service, 'ask', fake_ask)
+    monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
     client = TestClient(app)
     client.delete("/api/chat/messages")
 
@@ -29,7 +118,7 @@ def test_send_chat_message_returns_answer_and_persists_messages_via_agent(monkey
         'references': [
             {'type': 'entity', 'name': '向量空间', 'summary': '线性代数中的基本概念', 'fact': None}
         ],
-        'agent_trace': {'mode': 'graph_rag', 'retrieval_rounds': 1, 'final_action': 'answer', 'steps': []},
+        'agent_trace': build_expected_trace(trace, references),
     }
     assert call_log == [('什么是向量空间？', 'default')]
 
@@ -43,16 +132,18 @@ def test_send_chat_message_returns_answer_and_persists_messages_via_agent(monkey
 
 def test_rag_query_returns_agent_answer_without_persisting_messages(monkeypatch):
     call_log = []
+    trace = {'mode': 'graph_rag', 'retrieval_rounds': 1, 'final_action': 'kb_grounded_answer', 'steps': []}
+    references = [ChatReference(type='relationship', fact='向量空间可用于表示向量集合')]
 
-    async def fake_ask(message: str, group_id: str = 'default'):
-        call_log.append((message, group_id))
-        return {
-            'answer': '这是仅用于 RAG 查询的答案。',
-            'references': [ChatReference(type='relationship', fact='向量空间可用于表示向量集合')],
-            'agent_trace': {'mode': 'graph_rag', 'retrieval_rounds': 1, 'final_action': 'answer', 'steps': []},
-        }
+    def fake_create_chat_canvas(*, query: str, group_id: str = 'default', **kwargs):
+        call_log.append((query, group_id))
+        return build_stub_canvas(
+            answer='这是仅用于 RAG 查询的答案。',
+            references=references,
+            trace=trace,
+        )
 
-    monkeypatch.setattr(chat_router.service.agent_service, 'ask', fake_ask)
+    monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
     client = TestClient(app)
     client.delete("/api/chat/messages")
 
@@ -64,7 +155,7 @@ def test_rag_query_returns_agent_answer_without_persisting_messages(monkeypatch)
         'references': [
             {'type': 'relationship', 'name': None, 'summary': None, 'fact': '向量空间可用于表示向量集合'}
         ],
-        'agent_trace': {'mode': 'graph_rag', 'retrieval_rounds': 1, 'final_action': 'answer', 'steps': []},
+        'agent_trace': build_expected_trace(trace, references),
     }
     assert call_log == [('向量空间有什么用途？', 'default')]
 
@@ -73,22 +164,46 @@ def test_rag_query_returns_agent_answer_without_persisting_messages(monkeypatch)
     assert messages_response.json() == []
 
 
+def test_rag_query_uses_model_api_exception_handler(monkeypatch):
+    def fake_create_chat_canvas(*, query: str, group_id: str = 'default', **kwargs):
+        raise ModelAPIError(
+            error_code='MODEL_API_KEY_MISSING',
+            message='尚未配置 API Key，请先前往设置页面完成配置。',
+            status_code=400,
+            details='对话模型 缺少可用的 deepseek API Key。',
+            provider='deepseek',
+            retryable=False,
+        )
+
+    monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
+    client = TestClient(app)
+
+    response = client.post("/api/chat/rag", json={"message": "解释一下 Transformer"})
+
+    assert response.status_code == 400
+    assert response.json() == {
+        'error_code': 'MODEL_API_KEY_MISSING',
+        'message': '尚未配置 API Key，请先前往设置页面完成配置。',
+        'details': '对话模型 缺少可用的 deepseek API Key。',
+        'provider': 'deepseek',
+        'retryable': False,
+    }
+
+
 def test_rag_stream_uses_agent_stream_path_and_returns_sse_payload(monkeypatch):
     call_log = []
+    trace = {'mode': 'graph_rag', 'retrieval_rounds': 1, 'final_action': 'kb_grounded_answer', 'steps': []}
+    references = [ChatReference(type='relationship', fact='向量空间可用于表示向量集合')]
 
-    async def fake_ask_stream(message: str, group_id: str = 'default'):
-        call_log.append((message, group_id))
-        yield {'type': 'trace', 'content': {'mode': 'graph_rag', 'retrieval_rounds': 1, 'final_action': 'answer', 'steps': []}}
-        yield {
-            'type': 'references',
-            'content': [
-                {'type': 'relationship', 'name': None, 'summary': None, 'fact': '向量空间可用于表示向量集合'}
-            ],
-        }
-        yield {'type': 'content', 'content': '这是流式代理答案。'}
-        yield {'type': 'done', 'content': ''}
+    def fake_create_chat_canvas(*, query: str, group_id: str = 'default', **kwargs):
+        call_log.append((query, group_id))
+        return build_stub_canvas(
+            answer='这是流式代理答案。',
+            references=references,
+            trace=trace,
+        )
 
-    monkeypatch.setattr(chat_router.service.agent_service, 'ask_stream', fake_ask_stream)
+    monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
     client = TestClient(app)
 
     with client.stream("POST", "/api/chat/stream", json={"message": "向量空间有什么用途？"}) as response:
@@ -99,9 +214,51 @@ def test_rag_stream_uses_agent_stream_path_and_returns_sse_payload(monkeypatch):
     assert call_log == [('向量空间有什么用途？', 'default')]
     assert body == ''.join(
         [
-            f"data: {json.dumps({'type': 'trace', 'content': {'mode': 'graph_rag', 'retrieval_rounds': 1, 'final_action': 'answer', 'steps': []}}, ensure_ascii=False)}\n\n",
+            f"data: {json.dumps({'type': 'thinking', 'content': '已创建工作流，正在整理问题与上下文。'}, ensure_ascii=False)}\n\n",
+            f"data: {json.dumps({'type': 'thinking', 'content': '知识库证据充足，正在生成基于证据的回答。'}, ensure_ascii=False)}\n\n",
+            f"data: {json.dumps({'type': 'thinking', 'content': '工作流执行完成，准备返回结果。'}, ensure_ascii=False)}\n\n",
+            f"data: {json.dumps({'type': 'thinking', 'content': '正在整理引用与可解释轨迹。'}, ensure_ascii=False)}\n\n",
+            f"data: {json.dumps({'type': 'trace', 'content': build_expected_trace(trace, references)}, ensure_ascii=False)}\n\n",
             f"data: {json.dumps({'type': 'references', 'content': [{'type': 'relationship', 'name': None, 'summary': None, 'fact': '向量空间可用于表示向量集合'}]}, ensure_ascii=False)}\n\n",
             f"data: {json.dumps({'type': 'content', 'content': '这是流式代理答案。'}, ensure_ascii=False)}\n\n",
             f"data: {json.dumps({'type': 'done', 'content': ''}, ensure_ascii=False)}\n\n",
+        ]
+    )
+
+
+def test_rag_stream_returns_structured_model_error_payload(monkeypatch):
+    def fake_create_chat_canvas(*, query: str, group_id: str = 'default', **kwargs):
+        raise ModelAPIError(
+            error_code='MODEL_API_QUOTA_EXCEEDED',
+            message='当前 API Key 可用额度已用完，请更换 Key 或检查账号额度。',
+            status_code=402,
+            details='402 insufficient quota',
+            provider='deepseek',
+            retryable=False,
+        )
+
+    monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
+    client = TestClient(app)
+
+    with client.stream("POST", "/api/chat/stream", json={"message": "你好"}) as response:
+        assert response.status_code == 200
+        body = ''.join(response.iter_text())
+
+    assert body == ''.join(
+        [
+            "data: "
+            + json.dumps(
+                {
+                    'type': 'error',
+                    'content': '当前 API Key 可用额度已用完，请更换 Key 或检查账号额度。',
+                    'error_code': 'MODEL_API_QUOTA_EXCEEDED',
+                    'message': '当前 API Key 可用额度已用完，请更换 Key 或检查账号额度。',
+                    'details': '402 insufficient quota',
+                    'provider': 'deepseek',
+                    'retryable': False,
+                },
+                ensure_ascii=False,
+            )
+            + "\n\n"
         ]
     )

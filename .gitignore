@@ -17,3 +17,5 @@ backend/.pip-temp/
 backend/*.log
 frontend/*.log
 frontend/tsconfig.tsbuildinfo
+frontend/tsconfig.node.tsbuildinfo
+*.pid

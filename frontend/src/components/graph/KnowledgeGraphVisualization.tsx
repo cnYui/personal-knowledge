@@ -57,9 +57,9 @@ export function KnowledgeGraphVisualization({ data, selectedNodeId, onNodeClick 
       label: edge.label,
       type: 'smoothstep',
       animated: true,
-      style: { stroke: '#1976d2', strokeWidth: 2 },
-      labelStyle: { fill: '#666', fontSize: 12 },
-      labelBgStyle: { fill: '#fff', fillOpacity: 0.8 },
+      style: { stroke: '#b0aea5', strokeWidth: 1.6 },
+      labelStyle: { fill: '#6f6a61', fontSize: 12 },
+      labelBgStyle: { fill: '#fffdf8', fillOpacity: 0.92 },
     }))
   }, [data.edges])
 
@@ -88,14 +88,22 @@ export function KnowledgeGraphVisualization({ data, selectedNodeId, onNodeClick 
         maxZoom={2}
         attributionPosition="bottom-left"
       >
-        <Background />
+        <Background color="#e8e6dc" gap={18} />
         <Controls />
         <MiniMap
-          nodeColor={(node) => (node.id === selectedNodeId ? '#1976d2' : '#e0e0e0')}
-          maskColor="rgba(0, 0, 0, 0.1)"
+          nodeColor={(node) => (node.id === selectedNodeId ? '#d97757' : '#e8e6dc')}
+          maskColor="rgba(20, 20, 19, 0.08)"
         />
         <Panel position="top-right">
-          <Paper sx={{ p: 2, bgcolor: 'rgba(255, 255, 255, 0.9)' }}>
+          <Paper
+            sx={{
+              p: 2,
+              bgcolor: 'rgba(255, 253, 248, 0.92)',
+              border: '1px solid rgba(176, 174, 165, 0.28)',
+              borderRadius: 3,
+              boxShadow: '0 12px 28px rgba(20, 20, 19, 0.05)',
+            }}
+          >
             <Typography variant="body2" color="text.secondary">
               节点: {data.stats.total_nodes}
             </Typography>

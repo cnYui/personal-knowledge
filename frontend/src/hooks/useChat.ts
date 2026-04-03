@@ -1,13 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-import { clearChatMessages, fetchChatMessages, sendChatMessageStream } from '../services/chatApi'
-import { AgentTrace, ChatReference } from '../types/chat'
+import { useAppToast } from '../components/common/AppToastProvider'
+import {
+  clearChatMessages,
+  fetchChatMessages,
+  generateId,
+  loadMessagesFromStorage,
+  saveMessagesToStorage,
+  sendChatMessageStream,
+} from '../services/chatApi'
+import { ApiErrorPayload } from '../types/api'
+import { ChatMessage } from '../types/chat'
 
 export function useChatMessages() {
-  return useQuery({ 
-    queryKey: ['chat-messages'], 
-    queryFn: fetchChatMessages, 
+  return useQuery({
+    queryKey: ['chat-messages'],
+    queryFn: fetchChatMessages,
+    initialData: loadMessagesFromStorage,
     // 移除自动刷新，避免在流式输出时重复显示消息
     refetchInterval: false,
   })
@@ -15,48 +25,186 @@ export function useChatMessages() {
 
 export function useSendChatMessage() {
   const queryClient = useQueryClient()
+  const { showToast } = useAppToast()
   const [isStreaming, setIsStreaming] = useState(false)
-  const [streamingContent, setStreamingContent] = useState('')
-  const [references, setReferences] = useState<ChatReference[]>([])
-  const [agentTrace, setAgentTrace] = useState<AgentTrace | null>(null)
+  const [isError, setIsError] = useState(false)
+  const pendingBufferRef = useRef('')
+  const typingTimerRef = useRef<number | null>(null)
+  const streamFinishedRef = useRef(false)
+  const resolveRef = useRef<(() => void) | null>(null)
+  const rejectRef = useRef<((error: Error) => void) | null>(null)
+  const activeAssistantIdRef = useRef<string | null>(null)
+
+  const showApiErrorToast = (error: ApiErrorPayload) => {
+    const severity = error.error_code === 'MODEL_API_KEY_MISSING' ? 'warning' : 'error'
+    showToast({ severity, message: error.message })
+  }
+
+  const persistMessages = (messages: ChatMessage[]) => {
+    saveMessagesToStorage(messages)
+    queryClient.setQueryData(['chat-messages'], messages)
+  }
+
+  const updateMessages = (updater: (messages: ChatMessage[]) => ChatMessage[]) => {
+    const currentMessages = (queryClient.getQueryData(['chat-messages']) as ChatMessage[] | undefined) ?? loadMessagesFromStorage()
+    const nextMessages = updater(currentMessages)
+    persistMessages(nextMessages)
+  }
+
+  const updateAssistantDraft = (assistantId: string, updater: (message: ChatMessage) => ChatMessage) => {
+    updateMessages((messages) =>
+      messages.map((message) => (message.id === assistantId ? updater(message) : message))
+    )
+  }
+
+  const stopTypingLoop = () => {
+    if (typingTimerRef.current !== null) {
+      window.clearInterval(typingTimerRef.current)
+      typingTimerRef.current = null
+    }
+  }
+
+  const finalizeStreamingMessage = () => {
+    stopTypingLoop()
+    const assistantId = activeAssistantIdRef.current
+    if (assistantId) {
+      updateAssistantDraft(assistantId, (message) => ({
+        ...message,
+        isStreaming: false,
+      }))
+    }
+    activeAssistantIdRef.current = null
+    pendingBufferRef.current = ''
+    streamFinishedRef.current = false
+    setIsStreaming(false)
+    setIsError(false)
+    const resolve = resolveRef.current
+    resolveRef.current = null
+    rejectRef.current = null
+    resolve?.()
+  }
+
+  const startTypingLoop = () => {
+    if (typingTimerRef.current !== null) {
+      return
+    }
+
+    typingTimerRef.current = window.setInterval(() => {
+      const assistantId = activeAssistantIdRef.current
+      if (!assistantId) {
+        stopTypingLoop()
+        return
+      }
+
+      if (!pendingBufferRef.current) {
+        if (streamFinishedRef.current) {
+          finalizeStreamingMessage()
+        }
+        return
+      }
+
+      const buffer = pendingBufferRef.current
+      const takeCount = buffer.length > 40 ? 5 : buffer.length > 12 ? 3 : 1
+      const nextSlice = buffer.slice(0, takeCount)
+      pendingBufferRef.current = buffer.slice(takeCount)
+
+      updateAssistantDraft(assistantId, (message) => ({
+        ...message,
+        content: `${message.content}${nextSlice}`,
+      }))
+    }, 24)
+  }
+
+  useEffect(() => {
+    return () => {
+      stopTypingLoop()
+    }
+  }, [])
 
   const sendMessage = async (message: string) => {
     setIsStreaming(true)
-    setStreamingContent('')
-    setReferences([])
-    setAgentTrace(null)
+    setIsError(false)
+    pendingBufferRef.current = ''
+    streamFinishedRef.current = false
+
+    const userMessage: ChatMessage = {
+      id: generateId(),
+      role: 'user',
+      content: message,
+      created_at: new Date().toISOString(),
+    }
+    const assistantId = generateId()
+    const assistantMessage: ChatMessage = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      created_at: new Date().toISOString(),
+      references: [],
+      agentTrace: null,
+      thinkingSteps: [],
+      isStreaming: true,
+    }
+    activeAssistantIdRef.current = assistantId
+    updateMessages((messages) => [...messages, userMessage, assistantMessage])
 
     return new Promise<void>((resolve, reject) => {
+      resolveRef.current = resolve
+      rejectRef.current = reject
       sendChatMessageStream(
         message,
         (chunk) => {
-          // 每次收到新内容
-          setStreamingContent((prev) => prev + chunk)
+          pendingBufferRef.current += chunk
+          startTypingLoop()
         },
         (refs) => {
-          // 收到引用
-          setReferences(refs)
+          updateAssistantDraft(assistantId, (draft) => ({
+            ...draft,
+            references: refs,
+          }))
+        },
+        (summary) => {
+          updateAssistantDraft(assistantId, (draft) => ({
+            ...draft,
+            thinkingSteps: draft.thinkingSteps?.includes(summary)
+              ? draft.thinkingSteps
+              : [...(draft.thinkingSteps ?? []), summary],
+          }))
         },
         (trace) => {
-          setAgentTrace(trace)
+          updateAssistantDraft(assistantId, (draft) => ({
+            ...draft,
+            agentTrace: trace,
+          }))
         },
-        () => {
-          // 完成
-          setIsStreaming(false)
-          setStreamingContent('')
-          setReferences([])
-          setAgentTrace(null)
-          queryClient.invalidateQueries({ queryKey: ['chat-messages'] })
-          resolve()
+        (fullContent) => {
+          if (fullContent && !pendingBufferRef.current) {
+            updateAssistantDraft(assistantId, (draft) => ({
+              ...draft,
+              content: draft.content || fullContent,
+            }))
+          }
+          streamFinishedRef.current = true
+          if (!pendingBufferRef.current) {
+            finalizeStreamingMessage()
+          }
         },
         (error) => {
-          // 错误
+          stopTypingLoop()
           setIsStreaming(false)
-          setStreamingContent('')
-          setReferences([])
-          setAgentTrace(null)
-          queryClient.invalidateQueries({ queryKey: ['chat-messages'] })
-          reject(new Error(error))
+          setIsError(true)
+          updateAssistantDraft(assistantId, (draft) => ({
+            ...draft,
+            isStreaming: false,
+            content: draft.content || `错误: ${error.message}`,
+          }))
+          showApiErrorToast(error)
+          activeAssistantIdRef.current = null
+          pendingBufferRef.current = ''
+          streamFinishedRef.current = false
+          resolveRef.current = null
+          const rejectFn = rejectRef.current
+          rejectRef.current = null
+          rejectFn?.(new Error(error.message))
         }
       )
     })
@@ -65,10 +213,7 @@ export function useSendChatMessage() {
   return {
     mutateAsync: sendMessage,
     isPending: isStreaming,
-    isError: false,
-    streamingContent,
-    references,
-    agentTrace,
+    isError,
   }
 }
 
@@ -76,6 +221,6 @@ export function useClearChatMessages() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: clearChatMessages,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['chat-messages'] }),
+    onSuccess: () => queryClient.setQueryData(['chat-messages'], []),
   })
 }

@@ -13,7 +13,15 @@ export function ChatInput({ onSend, disabled }: { onSend: (message: string) => v
   }
 
   return (
-    <Paper sx={{ p: 2, borderRadius: 3 }}>
+    <Paper
+      sx={{
+        p: 1.25,
+        borderRadius: 4,
+        border: '1px solid rgba(176, 174, 165, 0.28)',
+        backgroundColor: 'rgba(255, 253, 248, 0.92)',
+        boxShadow: '0 16px 36px rgba(20, 20, 19, 0.06)',
+      }}
+    >
       <Stack direction="row" spacing={1} alignItems="center">
         <TextField
           fullWidth
@@ -30,7 +38,22 @@ export function ChatInput({ onSend, disabled }: { onSend: (message: string) => v
             }
           }}
         />
-        <IconButton color="primary" onClick={handleSend} disabled={disabled}>
+        <IconButton
+          color="primary"
+          onClick={handleSend}
+          disabled={disabled}
+          sx={{
+            bgcolor: 'primary.main',
+            color: 'primary.contrastText',
+            '&:hover': {
+              bgcolor: '#20201e',
+            },
+            '&.Mui-disabled': {
+              bgcolor: 'rgba(20, 20, 19, 0.16)',
+              color: 'rgba(250, 249, 245, 0.76)',
+            },
+          }}
+        >
           <SendIcon />
         </IconButton>
       </Stack>

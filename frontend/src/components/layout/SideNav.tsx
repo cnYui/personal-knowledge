@@ -1,6 +1,7 @@
 import AutoStoriesIcon from '@mui/icons-material/AutoStories'
 import ChatIcon from '@mui/icons-material/Chat'
 import AccountTreeIcon from '@mui/icons-material/AccountTree'
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 import { Box, List, ListItemButton, ListItemIcon, ListItemText, Typography } from '@mui/material'
 import { NavLink } from 'react-router-dom'
@@ -10,35 +11,77 @@ const items = [
   { to: '/upload', label: '记忆上传', icon: <UploadFileIcon /> },
   { to: '/chat', label: '知识对话', icon: <ChatIcon /> },
   { to: '/graph', label: '知识图谱', icon: <AccountTreeIcon /> },
+  { to: '/settings', label: '设置', icon: <SettingsOutlinedIcon /> },
 ]
 
 export function SideNav() {
   return (
     <Box
       sx={{
-        width: 240,
+        width: 258,
         height: '100vh',
         flexShrink: 0,
         overflowY: 'auto',
-        bgcolor: '#111827',
-        color: '#fff',
-        px: 2,
-        py: 3,
+        bgcolor: 'rgba(247, 245, 238, 0.95)',
+        backgroundImage: 'linear-gradient(180deg, rgba(247,245,238,0.98) 0%, rgba(240,236,226,0.94) 100%)',
+        color: '#141413',
+        px: 2.25,
+        py: 2.5,
+        borderRight: '1px solid rgba(176, 174, 165, 0.3)',
       }}
     >
-      <Typography variant="h6" sx={{ mb: 3, fontWeight: 700 }}>
-        Knowledge Base
-      </Typography>
+      <Box
+        sx={{
+          mb: 3.5,
+          px: 0.75,
+          py: 1.25,
+        }}
+      >
+        <Typography
+          variant="h6"
+          sx={{
+            fontFamily: 'Poppins, Arial, sans-serif',
+            fontWeight: 700,
+            lineHeight: 1.15,
+            letterSpacing: '-0.03em',
+            color: '#141413',
+          }}
+        >
+          个人知识库
+        </Typography>
+      </Box>
       <List>
         {items.map((item) => (
           <ListItemButton
             key={item.to}
             component={NavLink}
             to={item.to}
-            sx={{ borderRadius: 2, mb: 1, color: '#fff', '&.active': { bgcolor: 'rgba(255,255,255,0.12)' } }}
+            sx={{
+              borderRadius: 999,
+              mb: 0.75,
+              color: '#3f3b35',
+              px: 1.5,
+              py: 1.1,
+              border: '1px solid transparent',
+              transition: 'all 0.18s ease',
+              '&:hover': {
+                bgcolor: 'rgba(232, 230, 220, 0.52)',
+              },
+              '&.active': {
+                bgcolor: 'rgba(232, 230, 220, 0.7)',
+                borderColor: 'rgba(176, 174, 165, 0.4)',
+                color: '#141413',
+              },
+            }}
           >
-            <ListItemIcon sx={{ color: 'inherit', minWidth: 36 }}>{item.icon}</ListItemIcon>
-            <ListItemText primary={item.label} />
+            <ListItemIcon sx={{ color: 'inherit', minWidth: 38 }}>{item.icon}</ListItemIcon>
+            <ListItemText
+              primary={item.label}
+              primaryTypographyProps={{
+                fontWeight: 600,
+                fontFamily: 'Poppins, Arial, sans-serif',
+              }}
+            />
           </ListItemButton>
         ))}
       </List>

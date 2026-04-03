@@ -9,6 +9,8 @@ from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.cross_encoder import OpenAIRerankerClient
 
 from app.core.config import settings
+from app.core.model_errors import map_model_api_error, missing_api_key_error
+from app.services.model_config_service import ModelConfigService, model_config_service
 from app.services.local_embedder import LocalEmbedder, LocalEmbedderConfig
 from app.services.stepfun_llm_client import StepFunLLMClient
 
@@ -18,38 +20,51 @@ logger = logging.getLogger(__name__)
 class GraphitiClient:
     """Wrapper for Graphiti SDK to manage knowledge graph operations."""
 
-    def __init__(self):
-        provider = settings.graph_llm_provider.lower().strip()
-        if provider == 'deepseek':
-            api_key = settings.deepseek_api_key or settings.openai_api_key
-            base_url = settings.deepseek_base_url
-            model = settings.deepseek_model
-        else:
-            api_key = settings.openai_api_key
-            base_url = settings.openai_base_url
-            model = 'step-1-8k'
-
-        # Configure LLM client (OpenAI-compatible API)
-        llm_config = LLMConfig(
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
-            small_model=model,
-            max_tokens=2048,
-        )
-        llm_client = StepFunLLMClient(config=llm_config)
-
-        # Configure Local Embedder (runs offline, no API needed)
+    def __init__(
+        self,
+        *,
+        model_config_service_instance: ModelConfigService | None = None,
+    ):
+        self.model_config_service = model_config_service_instance or model_config_service
         embedder_config = LocalEmbedderConfig(
             model_name='paraphrase-multilingual-MiniLM-L12-v2',  # Supports Chinese and English
         )
         embedder = LocalEmbedder(config=embedder_config)
+        self.embedder = embedder
+        self.client: Graphiti | None = None
+        self._runtime_signature: tuple[str, str, str, int] | None = None
+        self.relation_dedup_threshold = min(max(settings.graph_relation_dedup_threshold, 0.0), 1.0)
+        logger.info('GraphitiClient initialized')
 
-        # Configure CrossEncoder (Reranker) with the same provider
+    async def _ensure_runtime_client(self) -> None:
+        runtime_config = self.model_config_service.get_knowledge_build_config()
+        signature = (
+            runtime_config.provider,
+            runtime_config.api_key,
+            runtime_config.base_url,
+            self.model_config_service.version,
+        )
+        if self.client is not None and signature == self._runtime_signature:
+            return
+
+        if self.client is not None:
+            await self.client.close()
+
+        if not runtime_config.api_key:
+            raise missing_api_key_error(provider=runtime_config.provider, purpose='知识库构建模型')
+
+        llm_config = LLMConfig(
+            api_key=runtime_config.api_key,
+            base_url=runtime_config.base_url,
+            model=runtime_config.model,
+            small_model=runtime_config.model,
+            max_tokens=2048,
+        )
+        llm_client = StepFunLLMClient(config=llm_config)
         reranker_config = LLMConfig(
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
+            api_key=runtime_config.api_key,
+            base_url=runtime_config.base_url,
+            model=runtime_config.model,
         )
         cross_encoder = OpenAIRerankerClient(config=reranker_config)
 
@@ -58,11 +73,16 @@ class GraphitiClient:
             user=settings.neo4j_user,
             password=settings.neo4j_password,
             llm_client=llm_client,
-            embedder=embedder,
+            embedder=self.embedder,
             cross_encoder=cross_encoder,
         )
-        self.relation_dedup_threshold = min(max(settings.graph_relation_dedup_threshold, 0.0), 1.0)
-        logger.info('GraphitiClient initialized with provider=%s, model=%s, base_url=%s', provider, model, base_url)
+        self._runtime_signature = signature
+        logger.info(
+            'GraphitiClient runtime refreshed with provider=%s, model=%s, base_url=%s',
+            runtime_config.provider,
+            runtime_config.model,
+            runtime_config.base_url,
+        )
 
     async def add_memory_episode(
         self,
@@ -88,16 +108,23 @@ class GraphitiClient:
         Raises:
             Exception: If Graphiti ingestion fails
         """
+        await self._ensure_runtime_client()
         logger.info(f'Adding memory {memory_id} to knowledge graph')
 
-        result = await self.client.add_episode(
-            name=title,
-            episode_body=content,
-            source_description=f'Memory from personal knowledge base (ID: {memory_id})',
-            reference_time=created_at,
-            source=EpisodeType.message,
-            group_id=group_id,
-        )
+        try:
+            result = await self.client.add_episode(
+                name=title,
+                episode_body=content,
+                source_description=f'Memory from personal knowledge base (ID: {memory_id})',
+                reference_time=created_at,
+                source=EpisodeType.message,
+                group_id=group_id,
+            )
+        except Exception as error:
+            raise map_model_api_error(
+                error,
+                provider=self.model_config_service.get_knowledge_build_config().provider,
+            ) from error
 
         episode_uuid = result.episode.uuid
         logger.info(f'Memory {memory_id} added to graph as episode {episode_uuid}')
@@ -116,6 +143,7 @@ class GraphitiClient:
         Returns:
             List of EntityEdge objects from Graphiti
         """
+        await self._ensure_runtime_client()
         logger.info(f'GraphitiClient.search() called')
         logger.info(f'  Query: "{query}"')
         logger.info(f'  Group ID: {group_id}')
@@ -151,7 +179,10 @@ class GraphitiClient:
 
         except Exception as e:
             logger.error(f'GraphitiClient.search() failed: {e}', exc_info=True)
-            raise
+            raise map_model_api_error(
+                e,
+                provider=self.model_config_service.get_knowledge_build_config().provider,
+            ) from e
 
     def _normalize_relation_fact(self, fact: str) -> str:
         normalized = fact.lower().strip()
@@ -192,5 +223,6 @@ class GraphitiClient:
 
     async def close(self):
         """Close the Graphiti client connection."""
-        await self.client.close()
-        logger.info('GraphitiClient closed')
+        if self.client is not None:
+            await self.client.close()
+            logger.info('GraphitiClient closed')

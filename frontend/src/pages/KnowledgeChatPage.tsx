@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Stack, Typography } from '@mui/material'
+import { Box, Button } from '@mui/material'
 
 import { ChatInput } from '../components/chat/ChatInput'
 import { ChatMessageList } from '../components/chat/ChatMessageList'
@@ -16,19 +16,16 @@ export function KnowledgeChatPage() {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
-        <Box>
-          <Typography variant="h5" sx={{ fontWeight: 700 }}>
-            聊天
-          </Typography>
-        </Box>
-        <Button variant="outlined" onClick={() => clearMutation.mutate()} disabled={clearMutation.isPending}>
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Button
+          variant="outlined"
+          onClick={() => clearMutation.mutate()}
+          disabled={clearMutation.isPending}
+          sx={{ borderRadius: 999 }}
+        >
           清空对话
         </Button>
-      </Stack>
-
-      {sendMutation.isError || clearMutation.isError ? <Alert severity="error">请求失败，请稍后重试。</Alert> : null}
-
+      </Box>
       <Box
         sx={{
           flex: 1,
@@ -39,10 +36,6 @@ export function KnowledgeChatPage() {
       >
         <ChatMessageList
           messages={data}
-          loading={sendMutation.isPending}
-          streamingContent={sendMutation.streamingContent}
-          streamingReferences={sendMutation.references}
-          streamingAgentTrace={sendMutation.agentTrace}
         />
       </Box>
 

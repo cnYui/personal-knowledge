@@ -33,6 +33,11 @@ class GraphVisualizationService:
         logger.info(f'Fetching graph data for group_id={group_id}, limit={limit}')
 
         try:
+            await self.graphiti_client._ensure_runtime_client()
+            if self.graphiti_client.client is None:
+                logger.warning('Graphiti client is not initialized after runtime refresh')
+                return GraphData(nodes=[], edges=[], stats={'total_nodes': 0, 'total_edges': 0})
+
             driver = self.graphiti_client.client.driver
 
             # Fetch edges by group_id

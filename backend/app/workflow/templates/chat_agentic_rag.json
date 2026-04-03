@@ -1,0 +1,30 @@
+{
+  "entry_node_id": "begin",
+  "metadata": {
+    "template": "chat_agentic_rag"
+  },
+  "nodes": [
+    {
+      "id": "begin",
+      "type": "begin",
+      "downstream": ["agent"]
+    },
+    {
+      "id": "agent",
+      "type": "agent",
+      "downstream": ["message"],
+      "config": {
+        "query_ref": "sys.query",
+        "group_id": "default",
+        "max_rounds": 2
+      }
+    },
+    {
+      "id": "message",
+      "type": "message",
+      "config": {
+        "source_ref": "node:agent"
+      }
+    }
+  ]
+}

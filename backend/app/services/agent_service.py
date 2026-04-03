@@ -1,279 +1,152 @@
-import json
 import logging
 from collections.abc import AsyncGenerator
-from inspect import isawaitable
+from typing import Any
 
-from app.schemas.agent import (
-    AgentPlanningDecision,
-    AgentTrace,
-    AgentTraceStep,
-    GraphRetrievalResult,
-)
-from app.services.agent_prompts import (
-    CHITCHAT_PREFIXES,
-    RETRIEVAL_RETRY_PLANNER_SYSTEM_PROMPT,
-    STRICT_AGENT_SYSTEM_PROMPT,
-)
+from app.core.model_errors import ModelAPIError
+from app.schemas.chat import ChatReference
 from app.services.agent_tools.graph_retrieval_tool import GraphRetrievalTool
 from app.services.knowledge_graph_service import KnowledgeGraphService
+from app.workflow.canvas_factory import CanvasFactory
+from app.workflow.engine.citation_postprocessor import CitationPostProcessor, CitationResult
 
 logger = logging.getLogger(__name__)
 
 
 class AgentService:
-    """Strict-mode agent that only uses graph retrieval for knowledge-grounded answers."""
+    """Legacy compatibility wrapper around the Canvas-based agentic chat workflow."""
 
     def __init__(
         self,
         graph_retrieval_tool: GraphRetrievalTool | None = None,
         knowledge_graph_service: KnowledgeGraphService | None = None,
-        max_retrieval_rounds: int = 2,
+        canvas_factory: CanvasFactory | None = None,
+        citation_postprocessor: CitationPostProcessor | None = None,
     ) -> None:
         shared_knowledge_graph_service = knowledge_graph_service or getattr(
             graph_retrieval_tool, 'knowledge_graph_service', None
         )
-        if shared_knowledge_graph_service is None and graph_retrieval_tool is None:
-            shared_knowledge_graph_service = KnowledgeGraphService()
-
-        self.knowledge_graph_service = shared_knowledge_graph_service
-        self.graph_retrieval_tool = graph_retrieval_tool or GraphRetrievalTool(
-            knowledge_graph_service=shared_knowledge_graph_service
+        self.canvas_factory = canvas_factory or CanvasFactory(
+            knowledge_graph_service=shared_knowledge_graph_service,
+            graph_retrieval_tool=graph_retrieval_tool,
         )
-        self.system_prompt = STRICT_AGENT_SYSTEM_PROMPT
-        self.max_retrieval_rounds = max_retrieval_rounds
+        self.citation_postprocessor = citation_postprocessor or CitationPostProcessor()
 
-    def _get_knowledge_graph_service(self) -> KnowledgeGraphService:
-        if self.knowledge_graph_service is None:
-            self.knowledge_graph_service = KnowledgeGraphService()
-        return self.knowledge_graph_service
-
-    def _normalize_query(self, query: str) -> str:
-        return query.strip()
-
-    def _new_trace(self, mode: str) -> AgentTrace:
-        return AgentTrace(mode=mode, final_action='')
-
-    def _append_trace_step(
+    def _collect_references(
         self,
-        trace: AgentTrace,
+        canvas,
+        fallback_references: list[Any] | None = None,
+    ) -> list[ChatReference]:
+        references: list[ChatReference] = []
+        for evidence in canvas.reference_store.snapshot().get('graph_evidence', []):
+            try:
+                references.append(ChatReference.model_validate(evidence))
+            except Exception:
+                logger.debug('Skip invalid graph evidence for chat references: %s', evidence)
+        if references:
+            return references
+
+        normalized_fallback: list[ChatReference] = []
+        for item in fallback_references or []:
+            if hasattr(item, 'model_dump'):
+                normalized_fallback.append(ChatReference.model_validate(item.model_dump()))
+            elif isinstance(item, dict):
+                normalized_fallback.append(ChatReference.model_validate(item))
+        return normalized_fallback
+
+    def _augment_trace(
+        self,
+        trace: Any,
         *,
-        step_type: str,
-        query: str = '',
-        message: str = '',
-        evidence_found: bool | None = None,
-        retrieved_edge_count: int | None = None,
-        rewritten_query: str = '',
-        action: str = '',
-    ) -> None:
-        trace.steps.append(
-            AgentTraceStep(
-                step_type=step_type,
-                query=query,
-                message=message,
-                evidence_found=evidence_found,
-                retrieved_edge_count=retrieved_edge_count,
-                rewritten_query=rewritten_query,
-                action=action,
-            )
-        )
-
-    def _strip_json_block(self, content: str) -> str:
-        normalized = content.strip()
-        if normalized.startswith('```'):
-            lines = normalized.splitlines()
-            if len(lines) >= 3:
-                normalized = '\n'.join(lines[1:-1]).strip()
-        return normalized
-
-    async def _complete_json(self, *, system_prompt: str, user_prompt: str) -> str:
-        knowledge_graph_service = self._get_knowledge_graph_service()
-        response = knowledge_graph_service.llm_client.chat.completions.create(
-            model='step-1-8k',
-            messages=[
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': user_prompt},
+        execution_path: list[str],
+        canvas_events: list[dict[str, Any]],
+        citation_result: CitationResult,
+        reference_store_snapshot: dict[str, Any],
+        workflow_debug: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        if trace is None:
+            return None
+        trace_payload = trace.model_dump() if hasattr(trace, 'model_dump') else dict(trace)
+        trace_payload['canvas'] = {
+            'execution_path': execution_path,
+            'events': canvas_events,
+        }
+        trace_payload['tool_loop'] = workflow_debug or {
+            'forced_retrieval': False,
+            'tool_rounds_exceeded': False,
+            'tool_steps': [],
+        }
+        trace_payload['citation'] = {
+            'count': len(citation_result.citations),
+            'used_general_fallback': citation_result.used_general_fallback,
+            'items': [
+                {
+                    'index': citation['index'],
+                    'type': citation['type'],
+                    'label': citation['label'],
+                }
+                for citation in citation_result.citations
             ],
-            temperature=0.1,
+        }
+        trace_payload['reference_store'] = {
+            'chunk_count': len(reference_store_snapshot.get('chunks', [])),
+            'doc_count': len(reference_store_snapshot.get('doc_aggs', [])),
+            'graph_evidence_count': len(reference_store_snapshot.get('graph_evidence', [])),
+        }
+        return trace_payload
+
+    async def _run_chat_canvas(self, query: str, *, group_id: str = 'default') -> dict[str, Any]:
+        canvas = self.canvas_factory.create_chat_canvas(query=query, group_id=group_id)
+        agent_output: dict[str, Any] | None = None
+        message_output: dict[str, Any] | None = None
+        canvas_events: list[dict[str, Any]] = []
+
+        async for event in canvas.run():
+            if event.node_id:
+                canvas_events.append(
+                    {
+                        'event': event.event,
+                        'node_id': event.node_id,
+                        'node_type': getattr(event, 'node_type', None),
+                    }
+                )
+            if event.event != 'node_finished':
+                continue
+            if event.node_id == 'agent':
+                agent_output = event.payload.get('output') or {}
+            elif event.node_id == 'message':
+                message_output = event.payload.get('output') or {}
+
+        if message_output is None:
+            raise RuntimeError('Canvas workflow did not produce a message output')
+
+        citation_result = self.citation_postprocessor.process(
+            answer=str(message_output.get('content') or ''),
+            reference_store=canvas.reference_store,
         )
-        if isawaitable(response):
-            response = await response
-        return str(response.choices[0].message.content or '')
-
-    async def _plan_retry(
-        self,
-        *,
-        original_query: str,
-        attempted_query: str,
-        retrieval_result: GraphRetrievalResult,
-        retrieval_round: int,
-    ) -> AgentPlanningDecision:
-        if retrieval_round >= self.max_retrieval_rounds:
-            return AgentPlanningDecision(
-                action='give_up',
-                reason='已达到最大检索轮数，不再继续重检索。',
-            )
-
-        user_prompt = (
-            f'原始用户问题：{original_query}\n'
-            f'本轮检索问题：{attempted_query}\n'
-            f'当前轮次：{retrieval_round}\n'
-            f'命中边数量：{retrieval_result.retrieved_edge_count}\n'
-            f'是否有足够证据：{retrieval_result.has_enough_evidence}\n'
-            f'空结果原因：{retrieval_result.empty_reason or "无"}\n'
-            '请判断是否值得改写问题后再检索一次。'
+        reference_store_snapshot = canvas.reference_store.snapshot()
+        references = self._collect_references(
+            canvas,
+            fallback_references=list(message_output.get('references') or []),
         )
-
-        try:
-            content = await self._complete_json(
-                system_prompt=RETRIEVAL_RETRY_PLANNER_SYSTEM_PROMPT,
-                user_prompt=user_prompt,
-            )
-            payload = json.loads(self._strip_json_block(content))
-            decision = AgentPlanningDecision.model_validate(payload)
-        except Exception as exc:
-            logger.warning('Retry planner failed, fallback to give_up: %s', exc, exc_info=True)
-            return AgentPlanningDecision(
-                action='give_up',
-                reason='重检索规划失败，采用保守兜底策略。',
-            )
-
-        rewritten_query = self._normalize_query(decision.rewritten_query)
-        if decision.action == 'rewrite' and rewritten_query and rewritten_query != attempted_query:
-            return decision.model_copy(update={'rewritten_query': rewritten_query})
-
-        return AgentPlanningDecision(
-            action='give_up',
-            reason=decision.reason or '未生成有效的重写问题。',
+        agent_trace = self._augment_trace(
+            (agent_output or {}).get('agent_trace'),
+            execution_path=list(canvas.execution_path),
+            canvas_events=canvas_events,
+            citation_result=citation_result,
+            reference_store_snapshot=reference_store_snapshot,
+            workflow_debug=(agent_output or {}).get('workflow_debug'),
         )
-
-    async def _resolve_retrieval_result(
-        self,
-        *,
-        query: str,
-        group_id: str,
-        trace: AgentTrace,
-    ) -> GraphRetrievalResult:
-        current_query = self._normalize_query(query)
-        retrieval_round = 1
-        retrieval_result = await self.graph_retrieval_tool.run(current_query, group_id=group_id)
-        trace.retrieval_rounds = retrieval_round
-        self._append_trace_step(
-            trace,
-            step_type='retrieval',
-            query=current_query,
-            message='执行图谱检索',
-            evidence_found=retrieval_result.has_enough_evidence,
-            retrieved_edge_count=retrieval_result.retrieved_edge_count,
-            action='retrieve',
-        )
-        logger.info(
-            'Agent retrieval round=%s query=%s evidence=%s edges=%s',
-            retrieval_round,
-            current_query,
-            retrieval_result.has_enough_evidence,
-            retrieval_result.retrieved_edge_count,
-        )
-
-        while not retrieval_result.has_enough_evidence and retrieval_round < self.max_retrieval_rounds:
-            decision = await self._plan_retry(
-                original_query=query,
-                attempted_query=current_query,
-                retrieval_result=retrieval_result,
-                retrieval_round=retrieval_round,
-            )
-            logger.info(
-                'Agent retry decision round=%s action=%s rewritten_query=%s reason=%s',
-                retrieval_round,
-                decision.action,
-                decision.rewritten_query,
-                decision.reason,
-            )
-            self._append_trace_step(
-                trace,
-                step_type='planner',
-                query=current_query,
-                message=decision.reason,
-                rewritten_query=decision.rewritten_query,
-                action=decision.action,
-            )
-            if decision.action != 'rewrite':
-                break
-
-            retrieval_round += 1
-            current_query = decision.rewritten_query
-            retrieval_result = await self.graph_retrieval_tool.run(current_query, group_id=group_id)
-            trace.retrieval_rounds = retrieval_round
-            self._append_trace_step(
-                trace,
-                step_type='retrieval',
-                query=current_query,
-                message='执行重写后的图谱检索',
-                evidence_found=retrieval_result.has_enough_evidence,
-                retrieved_edge_count=retrieval_result.retrieved_edge_count,
-                action='retrieve',
-            )
-            logger.info(
-                'Agent retrieval round=%s query=%s evidence=%s edges=%s',
-                retrieval_round,
-                current_query,
-                retrieval_result.has_enough_evidence,
-                retrieval_result.retrieved_edge_count,
-            )
-
-        return retrieval_result
-
-    def is_obvious_chitchat(self, query: str) -> bool:
-        normalized_query = self._normalize_query(query).lower()
-        return any(normalized_query.startswith(prefix.lower()) for prefix in CHITCHAT_PREFIXES)
-
-    def _build_chitchat_answer(self, query: str) -> str:
-        normalized_query = self._normalize_query(query)
-        if normalized_query.startswith('早上好'):
-            return '早上好！我是你的个人知识库助手，有什么想了解的可以直接问我。'
-        if normalized_query.startswith('晚上好'):
-            return '晚上好！我是你的个人知识库助手，需要我帮你查点什么吗？'
-        return '你好！我是你的个人知识库助手，可以陪你简单聊聊，也可以帮你查询知识图谱里的信息。'
+        return {
+            'answer': citation_result.answer,
+            'references': references,
+            'agent_trace': agent_trace,
+        }
 
     async def ask(self, query: str, group_id: str = 'default') -> dict:
         try:
-            if self.is_obvious_chitchat(query):
-                trace = self._new_trace('chitchat')
-                trace.final_action = 'chitchat_answer'
-                self._append_trace_step(
-                    trace,
-                    step_type='chitchat',
-                    query=query,
-                    message='识别为闲聊，直接回答。',
-                    action='direct_answer',
-                )
-                return {
-                    'answer': self._build_chitchat_answer(query),
-                    'references': [],
-                    'agent_trace': trace,
-                }
-
-            trace = self._new_trace('graph_rag')
-            retrieval_result = await self._resolve_retrieval_result(
-                query=query,
-                group_id=group_id,
-                trace=trace,
-            )
-            knowledge_graph_service = self._get_knowledge_graph_service()
-            trace.final_action = 'answer'
-            self._append_trace_step(
-                trace,
-                step_type='answer',
-                query=query,
-                message='基于图谱证据生成最终答案。',
-                evidence_found=retrieval_result.has_enough_evidence,
-                retrieved_edge_count=retrieval_result.retrieved_edge_count,
-                action='answer',
-            )
-            result = await knowledge_graph_service.answer_with_context(query, retrieval_result)
-            result['agent_trace'] = trace
-            return result
+            return await self._run_chat_canvas(query, group_id=group_id)
         except Exception as exc:
-            logger.error('Error in strict agent ask: %s', exc, exc_info=True)
+            logger.error('Error in legacy-compatible agent ask: %s', exc, exc_info=True)
             return {
                 'answer': f'抱歉，处理您的问题时出现错误：{str(exc)}',
                 'references': [],
@@ -282,49 +155,28 @@ class AgentService:
 
     async def ask_stream(self, query: str, group_id: str = 'default') -> AsyncGenerator[dict, None]:
         try:
-            if self.is_obvious_chitchat(query):
-                trace = self._new_trace('chitchat')
-                trace.final_action = 'chitchat_answer'
-                self._append_trace_step(
-                    trace,
-                    step_type='chitchat',
-                    query=query,
-                    message='识别为闲聊，直接回答。',
-                    action='direct_answer',
-                )
-                yield {'type': 'trace', 'content': trace.model_dump()}
-                yield {'type': 'references', 'content': []}
-                yield {'type': 'content', 'content': self._build_chitchat_answer(query)}
-                yield {'type': 'done', 'content': ''}
-                return
-
-            trace = self._new_trace('graph_rag')
-            retrieval_result = await self._resolve_retrieval_result(
-                query=query,
-                group_id=group_id,
-                trace=trace,
-            )
-            trace.final_action = 'answer'
-            self._append_trace_step(
-                trace,
-                step_type='answer',
-                query=query,
-                message='基于图谱证据生成最终答案。',
-                evidence_found=retrieval_result.has_enough_evidence,
-                retrieved_edge_count=retrieval_result.retrieved_edge_count,
-                action='answer',
-            )
-            yield {'type': 'trace', 'content': trace.model_dump()}
+            result = await self._run_chat_canvas(query, group_id=group_id)
+            yield {'type': 'trace', 'content': result.get('agent_trace')}
             yield {
                 'type': 'references',
-                'content': [reference.model_dump() for reference in retrieval_result.references],
+                'content': [
+                    reference.model_dump() if hasattr(reference, 'model_dump') else reference
+                    for reference in result.get('references', [])
+                ],
             }
-
-            knowledge_graph_service = self._get_knowledge_graph_service()
-            async for chunk in knowledge_graph_service.answer_with_context_stream(
-                query, retrieval_result
-            ):
-                yield chunk
+            yield {'type': 'content', 'content': str(result.get('answer', ''))}
+            yield {'type': 'done', 'content': ''}
         except Exception as exc:
-            logger.error('Error in strict agent stream: %s', exc, exc_info=True)
-            yield {'type': 'error', 'content': str(exc)}
+            logger.error('Error in legacy-compatible agent stream: %s', exc, exc_info=True)
+            if isinstance(exc, ModelAPIError):
+                yield {'type': 'error', 'content': exc.message, **exc.to_dict()}
+                return
+            yield {
+                'type': 'error',
+                'content': str(exc),
+                'error_code': 'UNKNOWN_ERROR',
+                'message': str(exc),
+                'details': '',
+                'provider': '',
+                'retryable': False,
+            }

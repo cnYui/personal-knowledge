@@ -29,11 +29,21 @@ export function KnowledgeGraphPage() {
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ display: 'flex', gap: 2, flex: 1, minHeight: 0 }}>
-        <Box sx={{ flex: 1, height: '100%', borderRadius: 3, overflow: 'hidden', bgcolor: '#fff' }}>
-          <KnowledgeGraphVisualization 
-            data={data} 
+        <Box
+          sx={{
+            flex: 1,
+            height: '100%',
+            borderRadius: 4,
+            overflow: 'hidden',
+            bgcolor: 'rgba(255, 253, 248, 0.9)',
+            border: '1px solid rgba(176, 174, 165, 0.22)',
+            boxShadow: '0 16px 34px rgba(20, 20, 19, 0.05)',
+          }}
+        >
+          <KnowledgeGraphVisualization
+            data={data}
             selectedNodeId={selectedNodeId}
-            onNodeClick={setSelectedNodeId} 
+            onNodeClick={setSelectedNodeId}
           />
         </Box>
         <Box sx={{ width: 320, height: '100%', overflow: 'auto' }}>

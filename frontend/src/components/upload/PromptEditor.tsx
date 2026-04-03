@@ -1,13 +1,16 @@
 import { Alert, Box, Button, CircularProgress, Paper, Stack, TextField, Typography } from '@mui/material'
 import { useState } from 'react'
 
+import { useAppToast } from '../common/AppToastProvider'
 import { usePrompt, useResetPrompt, useUpdatePrompt } from '../../hooks/usePrompt'
+import { normalizeApiError } from '../../services/apiClient'
 
 interface PromptEditorProps {
   promptKey: string
 }
 
 export function PromptEditor({ promptKey }: PromptEditorProps) {
+  const { showToast } = useAppToast()
   const { data: prompt, isLoading, isError } = usePrompt(promptKey)
   const updateMutation = useUpdatePrompt(promptKey)
   const resetMutation = useResetPrompt(promptKey)
@@ -41,9 +44,12 @@ export function PromptEditor({ promptKey }: PromptEditorProps) {
       console.log('[PromptEditor] Save successful')
       setIsEditing(false)
       setSuccessMessage('提示词已保存')
+      showToast({ severity: 'success', message: '提示词已保存，并会在后续请求中立即生效。' })
       setTimeout(() => setSuccessMessage(''), 3000)
     } catch (error) {
       console.error('[PromptEditor] Save failed:', error)
+      const apiError = normalizeApiError(error)
+      showToast({ severity: 'error', message: apiError.message })
     }
   }
 
@@ -56,9 +62,12 @@ export function PromptEditor({ promptKey }: PromptEditorProps) {
         setIsEditing(false)
         setEditedContent('')
         setSuccessMessage('已恢复默认提示词')
+        showToast({ severity: 'success', message: '提示词已恢复默认值。' })
         setTimeout(() => setSuccessMessage(''), 3000)
       } catch (error) {
         console.error('[PromptEditor] Reset failed:', error)
+        const apiError = normalizeApiError(error)
+        showToast({ severity: 'error', message: apiError.message })
       }
     }
   }
@@ -76,7 +85,16 @@ export function PromptEditor({ promptKey }: PromptEditorProps) {
   }
 
   return (
-    <Paper sx={{ p: 3 }}>
+    <Paper
+      sx={{
+        p: 3,
+        borderRadius: 4,
+        border: '1px solid',
+        borderColor: 'divider',
+        boxShadow: '0 16px 34px rgba(20, 20, 19, 0.05)',
+        background: 'linear-gradient(180deg, #fffdf8 0%, #f6f2e8 100%)',
+      }}
+    >
       <Stack spacing={2}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Box>
@@ -122,6 +140,16 @@ export function PromptEditor({ promptKey }: PromptEditorProps) {
               maxRows={20}
               fullWidth
               placeholder="输入提示词内容..."
+              InputProps={{
+                sx: {
+                  '& textarea': {
+                    fontFamily: 'inherit',
+                    fontSize: '1rem',
+                    lineHeight: 1.8,
+                    color: 'text.primary',
+                  },
+                },
+              }}
             />
             <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
               <Button variant="outlined" onClick={handleCancel} disabled={updateMutation.isPending}>
@@ -137,20 +165,25 @@ export function PromptEditor({ promptKey }: PromptEditorProps) {
             </Box>
           </>
         ) : (
-          <Box
-            sx={{
-              p: 2,
-              bgcolor: 'grey.50',
-              borderRadius: 1,
-              maxHeight: 300,
-              overflow: 'auto',
-              whiteSpace: 'pre-wrap',
-              fontFamily: 'monospace',
-              fontSize: '0.875rem',
+          <TextField
+            label="提示词内容"
+            value={prompt.content}
+            multiline
+            minRows={12}
+            maxRows={20}
+            fullWidth
+            InputProps={{
+              readOnly: true,
+              sx: {
+                '& textarea': {
+                  fontFamily: 'inherit',
+                  fontSize: '1rem',
+                  lineHeight: 1.8,
+                  color: 'text.primary',
+                },
+              },
             }}
-          >
-            {prompt.content}
-          </Box>
+          />
         )}
       </Stack>
     </Paper>

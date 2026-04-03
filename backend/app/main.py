@@ -2,13 +2,17 @@ import asyncio
 import logging
 
 from fastapi import FastAPI
+from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.database import SessionLocal, init_db
+from app.core.model_errors import ModelAPIError
 from app.routers.chat import router as chat_router
 from app.routers.graph import router as graph_router
 from app.routers.memories import router as memories_router
 from app.routers.prompts import router as prompts_router
+from app.routers.settings import router as settings_router
 from app.services.memory_service import MemoryService
 from app.routers.uploads import router as uploads_router
 from app.routers.text_optimization import router as text_router
@@ -38,8 +42,17 @@ app.include_router(chat_router)
 app.include_router(graph_router)
 app.include_router(memories_router)
 app.include_router(prompts_router)
+app.include_router(settings_router)
 app.include_router(uploads_router)
 app.include_router(text_router)
+
+
+@app.exception_handler(ModelAPIError)
+async def handle_model_api_error(_: Request, exc: ModelAPIError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+    )
 
 
 @app.on_event('startup')
