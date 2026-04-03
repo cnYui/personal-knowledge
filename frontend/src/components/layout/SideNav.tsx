@@ -37,6 +37,16 @@ export function SideNav() {
           py: 1.25,
         }}
       >
+        <Box
+          sx={{
+            width: 72,
+            height: 4,
+            borderRadius: 999,
+            mb: 1.25,
+            background: 'linear-gradient(90deg, #d97757 0%, #6a9bcc 100%)',
+            opacity: 0.9,
+          }}
+        />
         <Typography
           variant="h6"
           sx={{
@@ -65,16 +75,28 @@ export function SideNav() {
               border: '1px solid transparent',
               transition: 'all 0.18s ease',
               '&:hover': {
-                bgcolor: 'rgba(232, 230, 220, 0.52)',
+                bgcolor: 'rgba(106, 155, 204, 0.1)',
+                borderColor: 'rgba(106, 155, 204, 0.16)',
               },
               '&.active': {
-                bgcolor: 'rgba(232, 230, 220, 0.7)',
-                borderColor: 'rgba(176, 174, 165, 0.4)',
+                bgcolor: 'rgba(217, 119, 87, 0.14)',
+                borderColor: 'rgba(217, 119, 87, 0.24)',
                 color: '#141413',
+                boxShadow: '0 8px 18px rgba(217, 119, 87, 0.08)',
               },
             }}
           >
-            <ListItemIcon sx={{ color: 'inherit', minWidth: 38 }}>{item.icon}</ListItemIcon>
+            <ListItemIcon
+              sx={{
+                color: 'inherit',
+                minWidth: 38,
+                '.active &': {
+                  color: '#d97757',
+                },
+              }}
+            >
+              {item.icon}
+            </ListItemIcon>
             <ListItemText
               primary={item.label}
               primaryTypographyProps={{
