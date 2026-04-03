@@ -1,4 +1,4 @@
-import { AgentTrace, ChatMessage, ChatReference } from '../types/chat'
+import { AgentTrace, ChatMessage, ChatReference, ChatTimelineEvent } from '../types/chat'
 import { ApiErrorPayload } from '../types/api'
 import { buildApiUrl, createApiError, normalizeApiError } from './apiClient'
 
@@ -37,7 +37,7 @@ export async function sendChatMessageStream(
   message: string,
   onChunk: (content: string) => void,
   onReferences: (refs: ChatReference[]) => void,
-  onThinking: (summary: string) => void,
+  onTimeline: (event: ChatTimelineEvent) => void,
   onTrace: (trace: AgentTrace) => void,
   onComplete: (fullContent: string) => void,
   onError: (error: ApiErrorPayload) => void
@@ -92,10 +92,10 @@ export async function sendChatMessageStream(
           if (data.type === 'references') {
             const references = Array.isArray(data.content) ? data.content : []
             onReferences(references)
-          } else if (data.type === 'thinking') {
-            const summary = typeof data.content === 'string' ? data.content : ''
-            if (summary) {
-              onThinking(summary)
+          } else if (data.type === 'timeline') {
+            const event = data.content as ChatTimelineEvent
+            if (event?.id && event?.title) {
+              onTimeline(event)
             }
           } else if (data.type === 'trace') {
             const trace = data.content as AgentTrace

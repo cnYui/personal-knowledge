@@ -6,7 +6,19 @@ export interface ChatMessage {
   references?: ChatReference[]
   agentTrace?: AgentTrace | null
   thinkingSteps?: string[]
+  timeline?: ChatTimelineEvent[]
   isStreaming?: boolean
+}
+
+export interface ChatTimelineEvent {
+  id: string
+  kind: 'canvas' | 'understand' | 'retrieval' | 'answer' | 'citation'
+  title: string
+  detail: string
+  status: 'started' | 'done' | 'error'
+  order: number
+  preview_items?: string[]
+  preview_total?: number
 }
 
 export interface ChatReference {

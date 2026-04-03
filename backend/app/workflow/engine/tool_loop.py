@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from inspect import isawaitable
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass
@@ -99,6 +99,7 @@ class ToolLoopEngine:
         tool_registry: dict[str, Any],
         system_prompt: str | None = None,
         completion_kwargs: dict[str, Any] | None = None,
+        event_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> ToolLoopResult:
         history = [*messages]
         if system_prompt and (not history or history[0].get('role') != 'system'):
@@ -146,13 +147,79 @@ class ToolLoopEngine:
                     tool_name=tool_name,
                     arguments=arguments,
                 )
+                if event_callback is not None:
+                    query = str(arguments.get('query') or '').strip()
+                    detail = query and f'使用查询“{query}”发起知识图谱检索。' or '发起知识图谱检索。'
+                    event_callback(
+                        {
+                            'type': 'timeline',
+                            'id': f'tool-round-{round_index + 1}',
+                            'kind': 'retrieval',
+                            'title': f'检索第 {round_index + 1} 轮',
+                            'detail': detail,
+                            'status': 'started',
+                        }
+                    )
                 try:
                     result = await self._call_tool(tool_impl, arguments)
                     step.result = result
                     self._append_tool_history(history, tool_call=tool_call, result=result)
+                    if event_callback is not None:
+                        retrieved_edge_count = result.get('retrieved_edge_count') if isinstance(result, dict) else None
+                        has_enough_evidence = result.get('has_enough_evidence') if isinstance(result, dict) else None
+                        empty_reason = result.get('empty_reason') if isinstance(result, dict) else None
+                        query = str(arguments.get('query') or '').strip()
+                        detail = query and f'使用查询“{query}”发起知识图谱检索。' or '发起知识图谱检索。'
+                        if retrieved_edge_count is not None:
+                            detail = detail.rstrip('。') + f' 命中 {retrieved_edge_count} 条图谱证据。'
+                        if has_enough_evidence is True:
+                            detail += ' 当前证据已足够。'
+                        elif has_enough_evidence is False and empty_reason:
+                            detail += f' 当前证据仍不足：{empty_reason}'
+                        elif has_enough_evidence is False:
+                            detail += ' 当前证据仍不足。'
+                        preview_items: list[str] = []
+                        preview_total = 0
+                        if isinstance(result, dict):
+                            references = result.get('references')
+                            if isinstance(references, list):
+                                preview_total = len(references)
+                                for reference in references[:3]:
+                                    if isinstance(reference, dict):
+                                        preview = (
+                                            reference.get('fact')
+                                            or reference.get('summary')
+                                            or reference.get('name')
+                                            or reference.get('type')
+                                        )
+                                        if preview:
+                                            preview_items.append(str(preview))
+                        event_callback(
+                            {
+                                'type': 'timeline',
+                                'id': f'tool-round-{round_index + 1}',
+                                'kind': 'retrieval',
+                                'title': f'检索第 {round_index + 1} 轮',
+                                'detail': detail,
+                                'status': 'done',
+                                'preview_items': preview_items,
+                                'preview_total': preview_total,
+                            }
+                        )
                 except Exception as exc:
                     step.error = str(exc)
                     self._append_tool_history(history, tool_call=tool_call, result={'error': str(exc)})
+                    if event_callback is not None:
+                        event_callback(
+                            {
+                                'type': 'timeline',
+                                'id': f'tool-round-{round_index + 1}',
+                                'kind': 'retrieval',
+                                'title': f'检索第 {round_index + 1} 轮',
+                                'detail': f'检索执行失败：{exc}',
+                                'status': 'error',
+                            }
+                        )
                 steps.append(step)
 
         return ToolLoopResult(

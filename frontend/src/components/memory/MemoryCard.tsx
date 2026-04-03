@@ -18,7 +18,7 @@ export function MemoryCard({
   const [expanded, setExpanded] = useState(false)
 
   return (
-    <Card sx={{ borderRadius: 3 }}>
+    <Card sx={{ borderRadius: 0.75 }}>
       <CardContent>
         <Stack spacing={2}>
           <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>

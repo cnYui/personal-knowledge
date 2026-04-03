@@ -26,9 +26,17 @@ class Canvas:
         self._registry: dict[str, NodeFactory] = {}
         self._node_specs = self.dsl.node_map()
         self.execution_path: list[str] = []
+        self._runtime_event_sink: Callable[[dict[str, Any]], None] | None = None
 
     def register_node_type(self, node_type: str, factory: NodeFactory) -> None:
         self._registry[node_type] = factory
+
+    def set_runtime_event_sink(self, sink: Callable[[dict[str, Any]], None] | None) -> None:
+        self._runtime_event_sink = sink
+
+    def emit_runtime_event(self, event: dict[str, Any]) -> None:
+        if self._runtime_event_sink is not None:
+            self._runtime_event_sink(event)
 
     def get_node_spec(self, node_id: str) -> WorkflowNodeSpec:
         return self._node_specs[node_id]

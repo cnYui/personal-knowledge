@@ -13,7 +13,7 @@ export function NodeDetailPanel({ node }: NodeDetailPanelProps) {
         sx={{
           p: 3,
           height: '100%',
-          borderRadius: 4,
+          borderRadius: 0.9,
           border: '1px solid',
           borderColor: 'divider',
           boxShadow: '0 16px 34px rgba(20, 20, 19, 0.05)',
@@ -33,7 +33,7 @@ export function NodeDetailPanel({ node }: NodeDetailPanelProps) {
         p: 3,
         height: '100%',
         overflow: 'auto',
-        borderRadius: 4,
+        borderRadius: 0.9,
         border: '1px solid',
         borderColor: 'divider',
         boxShadow: '0 16px 34px rgba(20, 20, 19, 0.05)',

@@ -62,7 +62,7 @@ function ApiKeyCard({
     <Paper
       sx={{
         p: 3,
-        borderRadius: 4,
+        borderRadius: 0.9,
         border: '1px solid rgba(176, 174, 165, 0.24)',
         background: 'linear-gradient(180deg, rgba(255,253,248,0.98) 0%, rgba(245,241,232,0.94) 100%)',
         boxShadow: '0 18px 40px rgba(20, 20, 19, 0.05)',

@@ -2,10 +2,10 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded'
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded'
 import MoreHorizRoundedIcon from '@mui/icons-material/MoreHorizRounded'
-import { Accordion, AccordionDetails, AccordionSummary, Box, Chip, Collapse, Paper, Stack, Tooltip, Typography } from '@mui/material'
-import { useMemo, useState } from 'react'
+import { Box, Chip, Collapse, Paper, Stack, Tooltip, Typography } from '@mui/material'
+import { useEffect, useMemo, useState } from 'react'
 
-import { AgentTrace, ChatMessage, ChatReference } from '../../types/chat'
+import { AgentTrace, ChatMessage, ChatReference, ChatTimelineEvent } from '../../types/chat'
 import { MarkdownContent } from './MarkdownContent'
 
 function getReferenceText(reference: ChatReference) {
@@ -77,216 +77,91 @@ function CitationInline({ references }: { references: ChatReference[] }) {
   )
 }
 
-function AgentTraceSummary({ trace }: { trace: AgentTrace }) {
-  const canvasEvents = trace.canvas?.events ?? []
-  const toolSteps = trace.tool_loop?.tool_steps ?? []
-  const citationItems = trace.citation?.items ?? []
-  const directAnswer = trace.final_action === 'direct_general_answer'
-  const summaryModeLabel = directAnswer ? '直接回答' : '图谱检索'
-
-  return (
-    <Accordion
-      disableGutters
-      elevation={0}
-      sx={{
-        mt: 1.5,
-        backgroundColor: 'rgba(247, 245, 238, 0.85)',
-        border: '1px solid rgba(176, 174, 165, 0.2)',
-        borderRadius: 3,
-        '&:before': { display: 'none' },
-      }}
-    >
-      <AccordionSummary
-        expandIcon={<ExpandMoreIcon />}
-        sx={{
-          px: 1.5,
-          minHeight: 44,
-          '& .MuiAccordionSummary-content': {
-            my: 0.5,
-          },
-        }}
-      >
-        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
-          <Chip size="small" label={`模式: ${summaryModeLabel}`} />
-          <Chip size="small" label={`检索轮次: ${trace.retrieval_rounds}`} />
-          <Chip size="small" label={`最终动作: ${trace.final_action || 'unknown'}`} />
-        </Stack>
-      </AccordionSummary>
-      <AccordionDetails sx={{ px: 1.5, pt: 0.5, pb: 1.5 }}>
-        <Stack spacing={1.25}>
-          {trace.canvas ? (
-            <Box
-              sx={{
-                borderRadius: 2.5,
-                backgroundColor: 'rgba(255,253,248,0.86)',
-                border: '1px solid rgba(176, 174, 165, 0.18)',
-                px: 1.25,
-                py: 1,
-              }}
-            >
-              <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.75 }}>
-                Canvas
-              </Typography>
-              <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mb: 0.75 }}>
-                <Chip size="small" variant="outlined" label={`路径: ${trace.canvas.execution_path.join(' -> ') || '无'}`} />
-                {trace.reference_store ? (
-                  <>
-                    <Chip size="small" label={`图谱证据: ${trace.reference_store.graph_evidence_count}`} />
-                    <Chip size="small" label={`Chunks: ${trace.reference_store.chunk_count}`} />
-                    <Chip size="small" label={`文档: ${trace.reference_store.doc_count}`} />
-                  </>
-                ) : null}
-              </Stack>
-              {canvasEvents.length ? (
-                <Stack spacing={0.5}>
-                  {canvasEvents.map((event, index) => (
-                    <Typography key={`${event.event}-${event.node_id}-${index}`} variant="body2" color="text.secondary">
-                      {event.event} · {event.node_id}
-                      {event.node_type ? ` (${event.node_type})` : ''}
-                    </Typography>
-                  ))}
-                </Stack>
-              ) : null}
-            </Box>
-          ) : null}
-
-          {trace.steps.map((step, index) => (
-            <Box
-              key={`${step.step_type}-${index}`}
-              sx={{
-                borderRadius: 2.5,
-                backgroundColor: 'rgba(255,253,248,0.86)',
-                border: '1px solid rgba(176, 174, 165, 0.18)',
-                px: 1.25,
-                py: 1,
-              }}
-            >
-              <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap', mb: 0.5 }}>
-                <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                  Step {index + 1}
-                </Typography>
-                <Chip size="small" variant="outlined" label={step.step_type} />
-                {step.action ? <Chip size="small" label={`动作: ${step.action}`} /> : null}
-                {typeof step.retrieved_edge_count === 'number' ? (
-                  <Chip size="small" label={`命中边: ${step.retrieved_edge_count}`} />
-                ) : null}
-                {typeof step.evidence_found === 'boolean' ? (
-                  <Chip size="small" label={`证据: ${step.evidence_found ? '有' : '无'}`} />
-                ) : null}
-              </Stack>
-              {step.query ? (
-                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
-                  检索问题: {step.query}
-                </Typography>
-              ) : null}
-              {step.rewritten_query ? (
-                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
-                  改写问题: {step.rewritten_query}
-                </Typography>
-              ) : null}
-              {step.message ? (
-                <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>
-                  {step.message}
-                </Typography>
-              ) : null}
-            </Box>
-          ))}
-
-          {trace.tool_loop ? (
-            <Box
-              sx={{
-                borderRadius: 2.5,
-                backgroundColor: 'rgba(255,253,248,0.86)',
-                border: '1px solid rgba(176, 174, 165, 0.18)',
-                px: 1.25,
-                py: 1,
-              }}
-            >
-              <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap', mb: toolSteps.length ? 0.75 : 0 }}>
-                <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                  Tool Loop
-                </Typography>
-                <Chip size="small" label={`轮次超限: ${trace.tool_loop.tool_rounds_exceeded ? '是' : '否'}`} />
-              </Stack>
-              {toolSteps.length ? (
-                <Stack spacing={0.75}>
-                  {toolSteps.map((step, index) => (
-                    <Box
-                      key={`${step.tool_name}-${step.round_index}-${index}`}
-                      sx={{ borderRadius: 2, bgcolor: 'rgba(250,249,245,0.92)', px: 1, py: 0.75 }}
-                    >
-                      <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mb: 0.5 }}>
-                        <Chip size="small" variant="outlined" label={`Round ${step.round_index + 1}`} />
-                        <Chip size="small" label={step.tool_name} />
-                        {typeof step.result_summary?.retrieved_edge_count === 'number' ? (
-                          <Chip size="small" label={`命中边: ${step.result_summary.retrieved_edge_count}`} />
-                        ) : null}
-                        {typeof step.result_summary?.has_enough_evidence === 'boolean' ? (
-                          <Chip size="small" label={`证据: ${step.result_summary.has_enough_evidence ? '有' : '无'}`} />
-                        ) : null}
-                      </Stack>
-                      <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
-                        参数: {JSON.stringify(step.arguments, null, 2)}
-                      </Typography>
-                      {step.result_summary?.empty_reason ? (
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>
-                          空结果原因: {step.result_summary.empty_reason}
-                        </Typography>
-                      ) : null}
-                      {step.error ? (
-                        <Typography variant="body2" color="error.main" sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>
-                          错误: {step.error}
-                        </Typography>
-                      ) : null}
-                    </Box>
-                  ))}
-                </Stack>
-              ) : null}
-            </Box>
-          ) : null}
-
-          {trace.citation ? (
-            <Box
-              sx={{
-                borderRadius: 2.5,
-                backgroundColor: 'rgba(255,253,248,0.86)',
-                border: '1px solid rgba(176, 174, 165, 0.18)',
-                px: 1.25,
-                py: 1,
-              }}
-            >
-              <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mb: citationItems.length ? 0.75 : 0 }}>
-                <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                  Citation
-                </Typography>
-                <Chip size="small" label={`引用数: ${trace.citation.count}`} />
-                <Chip size="small" label={`通用补充: ${trace.citation.used_general_fallback ? '是' : '否'}`} />
-              </Stack>
-              {citationItems.length ? (
-                <Stack spacing={0.5}>
-                  {citationItems.map((item) => (
-                    <Typography key={`${item.type}-${item.index}`} variant="body2" color="text.secondary">
-                      [{item.index}] {item.label}
-                    </Typography>
-                  ))}
-                </Stack>
-              ) : null}
-            </Box>
-          ) : null}
-        </Stack>
-      </AccordionDetails>
-    </Accordion>
-  )
-}
-
 type ThinkingTimelineItem = {
   key: string
   label: string
   detail: string
-  status: 'done' | 'current'
+  status: 'done' | 'current' | 'error'
+  previewItems?: string[]
+  previewTotal?: number | null
+  placeholder?: boolean
 }
 
-function buildThinkingTimeline(trace: AgentTrace | null, steps: string[]) {
+function buildThinkingTimelineFromEvents(timelineEvents: ChatTimelineEvent[]) {
+  if (!timelineEvents.length) return null
+
+  const latestById = new Map<string, ChatTimelineEvent>()
+  timelineEvents
+    .slice()
+    .sort((a, b) => a.order - b.order)
+    .forEach((event) => {
+      latestById.set(event.id, event)
+    })
+
+  const items: ThinkingTimelineItem[] = Array.from(latestById.values())
+    .sort((a, b) => a.order - b.order)
+    .map((event) => ({
+      key: event.id,
+      label: event.title,
+      detail: event.detail,
+      status: event.status === 'error' ? 'error' : event.status === 'done' ? 'done' : 'current',
+      previewItems: event.preview_items ?? [],
+      previewTotal: event.preview_total ?? null,
+    }))
+
+  return items
+}
+
+function buildThinkingTimeline(timelineEvents: ChatTimelineEvent[], trace: AgentTrace | null, active: boolean) {
+  const fromEvents = buildThinkingTimelineFromEvents(timelineEvents)
+  if (fromEvents?.length) {
+    const hasCurrent = fromEvents.some((item) => item.status === 'current')
+    if (active && !hasCurrent) {
+      const hasUnderstand = fromEvents.some((item) => item.key === 'understand-question')
+      const hasRetrieval = fromEvents.some((item) => item.key.startsWith('tool-round-'))
+      const hasFinalAnswer = fromEvents.some((item) => item.key === 'final-answer')
+
+      if (!hasUnderstand) {
+        return [
+          {
+            key: 'placeholder-understand',
+            label: '理解问题',
+            detail: '正在理解你的问题',
+            status: 'current' as const,
+            placeholder: true,
+          },
+        ]
+      }
+
+      if (!hasRetrieval && !hasFinalAnswer) {
+        return [
+          ...fromEvents,
+          {
+            key: 'placeholder-retrieval',
+            label: '准备检索',
+            detail: '正在准备知识图谱检索',
+            status: 'current' as const,
+            placeholder: true,
+          },
+        ]
+      }
+
+      if (hasRetrieval && !hasFinalAnswer) {
+        return [
+          ...fromEvents,
+          {
+            key: 'placeholder-answer',
+            label: '组织最终回答',
+            detail: '正在基于当前证据生成回答',
+            status: 'current' as const,
+            placeholder: true,
+          },
+        ]
+      }
+    }
+    return fromEvents
+  }
+
   const toolSteps = trace?.tool_loop?.tool_steps ?? []
   if (toolSteps.length) {
     const timeline: ThinkingTimelineItem[] = toolSteps.map((step) => {
@@ -323,59 +198,85 @@ function buildThinkingTimeline(trace: AgentTrace | null, steps: string[]) {
     return timeline
   }
 
-  if (steps.length) {
-    return steps.map<ThinkingTimelineItem>((step, index) => ({
-      key: `step-${index}`,
-      label: index === steps.length - 1 ? '当前步骤' : `步骤 ${String(index + 1).padStart(2, '0')}`,
-      detail: step,
-      status: index === steps.length - 1 ? ('current' as const) : ('done' as const),
-    }))
+  if (active) {
+    return [
+      {
+        key: 'placeholder-understand',
+        label: '理解问题',
+        detail: '正在理解你的问题',
+        status: 'current' as const,
+        placeholder: true,
+      },
+    ]
   }
 
   return [
     {
-      key: 'workflow',
-      label: '创建工作流',
-      detail: '已创建工作流，正在整理问题与上下文。',
+      key: 'idle',
+      label: '执行过程',
+      detail: '本轮执行轨迹将在这里显示。',
       status: 'done' as const,
-    },
-    {
-      key: 'agent',
-      label: 'Agent 接管会话',
-      detail: 'Agent 正在决定是否调用知识检索工具。',
-      status: 'done' as const,
-    },
-    {
-      key: 'answer',
-      label: '组织最终回答',
-      detail: '正在汇总证据并准备组织最终回答。',
-      status: 'current' as const,
     },
   ]
 }
 
 function ThinkingSummaryPanel({
-  steps,
+  timelineEvents,
   trace,
   active = false,
 }: {
-  steps: string[]
+  timelineEvents: ChatTimelineEvent[]
   trace: AgentTrace | null
   active?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
-  const timeline = useMemo(() => buildThinkingTimeline(trace, steps), [trace, steps])
+  const [typedDetail, setTypedDetail] = useState('')
+  const timeline = useMemo(() => buildThinkingTimeline(timelineEvents, trace, active), [timelineEvents, trace, active])
   const currentStep = timeline[timeline.length - 1]
-  const doneCount = Math.max(timeline.filter((step) => step.status === 'done').length, 0)
-  const currentRound = trace?.tool_loop?.tool_steps?.length ?? 0
   const statusLabel = useMemo(() => {
-    if (currentRound > 0) {
-      return `检索第 ${currentRound} 轮`
+    if (currentStep.status === 'error') return '异常'
+    if (currentStep.status === 'done' && !active) return '已完成'
+    if (/检索/.test(currentStep.label)) return '检索中'
+    if (/回答|组织/.test(currentStep.label)) return '组织回答'
+    return '处理中'
+  }, [active, currentStep])
+
+  useEffect(() => {
+    if (!currentStep?.placeholder) {
+      setTypedDetail(currentStep?.detail ?? '')
+      return
     }
-    if (/回答|整理/.test(currentStep.detail)) return '组织回答'
-    if (/决定|接管|工作流|上下文/.test(currentStep.detail)) return '推理中'
-    return '思考中'
-  }, [currentRound, currentStep])
+
+    let frame = 0
+    let typingLength = 0
+    let deleting = false
+    const fullText = currentStep.detail
+
+    const timer = window.setInterval(() => {
+      if (!deleting) {
+        typingLength = Math.min(fullText.length, typingLength + 1)
+        setTypedDetail(fullText.slice(0, typingLength))
+        if (typingLength === fullText.length) {
+          frame += 1
+          if (frame >= 12) {
+            deleting = true
+            frame = 0
+          }
+        }
+        return
+      }
+
+      typingLength = Math.max(0, typingLength - 1)
+      setTypedDetail(fullText.slice(0, typingLength))
+      if (typingLength === 0) {
+        deleting = false
+      }
+    }, 55)
+
+    return () => window.clearInterval(timer)
+  }, [currentStep])
+
+  const currentDetail = currentStep.placeholder ? typedDetail || ' ' : currentStep.detail
 
   return (
     <Paper
@@ -385,7 +286,7 @@ function ThinkingSummaryPanel({
         maxWidth: '80%',
         alignSelf: 'flex-start',
         minWidth: { xs: '100%', md: 560 },
-        borderRadius: 4,
+        borderRadius: 0.9,
         border: '1px solid rgba(176, 174, 165, 0.24)',
         background: 'linear-gradient(180deg, rgba(255,253,248,0.96) 0%, rgba(246,243,235,0.96) 100%)',
         color: 'text.secondary',
@@ -436,7 +337,7 @@ function ThinkingSummaryPanel({
                   textOverflow: 'ellipsis',
                 }}
               >
-                {currentStep.detail}
+                {currentDetail}
               </Typography>
               <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                 {active ? '思考仍在继续，点击展开查看系统轨迹' : '点击展开查看系统思考轨迹'}
@@ -452,6 +353,7 @@ function ThinkingSummaryPanel({
                 bgcolor: 'rgba(232, 230, 220, 0.7)',
                 color: 'text.secondary',
                 border: '1px solid rgba(176, 174, 165, 0.24)',
+                borderRadius: 0.5,
               }}
             />
             <Box
@@ -475,13 +377,13 @@ function ThinkingSummaryPanel({
         <Collapse in={expanded} timeout={200}>
           <Stack spacing={1.25} sx={{ pt: 0.5 }}>
             <Stack direction="row" spacing={1} alignItems="center" sx={{ pl: 0.5 }}>
-              <Typography variant="caption" sx={{ color: 'text.disabled', letterSpacing: '0.12em' }}>
-                THINKING CHAIN
+              <Typography variant="caption" sx={{ color: 'text.disabled', letterSpacing: '0.08em' }}>
+                执行过程
               </Typography>
               <Chip
                 size="small"
                 variant="outlined"
-                label={currentRound > 0 ? `已执行 ${currentRound} 轮检索` : `阶段 ${timeline.length}`}
+                label={`共 ${timeline.length} 步`}
                 sx={{ height: 22, borderColor: 'rgba(176, 174, 165, 0.24)', color: 'text.secondary' }}
               />
             </Stack>
@@ -497,15 +399,21 @@ function ThinkingSummaryPanel({
                   top: 6,
                   bottom: 6,
                   width: 1.5,
-                  borderRadius: 999,
+                  borderRadius: 0.5,
                   background: 'linear-gradient(180deg, rgba(176,174,165,0.4) 0%, rgba(176,174,165,0.12) 100%)',
                 },
               }}
             >
               <Stack spacing={1.2}>
-                {timeline.map((step, index) => {
+                {timeline.map((step) => {
                   const isCurrent = step.status === 'current'
                   const isDone = step.status === 'done'
+                  const isError = step.status === 'error'
+                  const stepDetail = step.placeholder && step.key === currentStep.key ? currentDetail : step.detail
+                  const previewOverflow =
+                    step.previewTotal && step.previewItems?.length
+                      ? Math.max(step.previewTotal - step.previewItems.length, 0)
+                      : 0
 
                   return (
                     <Box key={step.key} sx={{ position: 'relative', pl: 1.25 }}>
@@ -520,7 +428,7 @@ function ThinkingSummaryPanel({
                           display: 'grid',
                           placeItems: 'center',
                           bgcolor: isCurrent ? 'rgba(217,119,87,0.12)' : 'rgba(255,253,248,0.95)',
-                          color: isCurrent ? 'secondary.main' : 'rgba(111,106,97,0.9)',
+                          color: isError ? 'error.main' : isCurrent ? 'secondary.main' : 'rgba(111,106,97,0.9)',
                           border: '1px solid rgba(176, 174, 165, 0.2)',
                           boxShadow: isCurrent ? '0 0 0 6px rgba(217,119,87,0.08)' : 'none',
                         }}
@@ -535,9 +443,9 @@ function ThinkingSummaryPanel({
                                 '0%': { opacity: 0.55, transform: 'translateX(-1px)' },
                                 '100%': { opacity: 1, transform: 'translateX(1px)' },
                               },
-                            animation: isCurrent ? 'thinkingDotShift 0.7s ease-in-out infinite alternate' : 'none',
-                          }}
-                        />
+                              animation: isCurrent ? 'thinkingDotShift 0.7s ease-in-out infinite alternate' : 'none',
+                            }}
+                          />
                         )}
                       </Box>
 
@@ -546,7 +454,7 @@ function ThinkingSummaryPanel({
                           variant="caption"
                           sx={{
                             fontWeight: 700,
-                            color: isCurrent ? 'secondary.main' : 'text.secondary',
+                            color: isError ? 'error.main' : isCurrent ? 'secondary.main' : 'text.secondary',
                             letterSpacing: '0.08em',
                           }}
                         >
@@ -563,27 +471,65 @@ function ThinkingSummaryPanel({
                               border: '1px solid rgba(217,119,87,0.16)',
                             }}
                           />
+                        ) : isError ? (
+                          <Chip
+                            size="small"
+                            label="失败"
+                            sx={{
+                              height: 20,
+                              bgcolor: 'rgba(211, 47, 47, 0.1)',
+                              color: 'error.main',
+                              border: '1px solid rgba(211, 47, 47, 0.2)',
+                            }}
+                          />
                         ) : null}
                       </Stack>
 
                       <Typography
                         variant="body2"
                         sx={{
-                          color: isCurrent ? 'text.primary' : 'text.secondary',
+                          color: isError ? 'error.main' : isCurrent ? 'text.primary' : 'text.secondary',
                           lineHeight: 1.7,
                         }}
                       >
-                        {step.detail}
+                        {stepDetail}
                       </Typography>
+                      {step.previewItems?.length ? (
+                        <Stack direction="row" spacing={0.75} sx={{ mt: 0.9, flexWrap: 'wrap' }}>
+                          {step.previewItems.map((item) => (
+                            <Chip
+                              key={`${step.key}-${item}`}
+                              size="small"
+                              label={item}
+                              variant="outlined"
+                              sx={{
+                                height: 24,
+                                mb: 0.6,
+                                borderColor: 'rgba(217,119,87,0.18)',
+                                bgcolor: 'rgba(255,253,248,0.72)',
+                                color: 'text.secondary',
+                              }}
+                            />
+                          ))}
+                          {previewOverflow > 0 ? (
+                            <Chip
+                              size="small"
+                              label={`+${previewOverflow} 条证据`}
+                              sx={{
+                                height: 24,
+                                mb: 0.6,
+                                bgcolor: 'rgba(232, 230, 220, 0.8)',
+                                color: 'text.secondary',
+                              }}
+                            />
+                          ) : null}
+                        </Stack>
+                      ) : null}
                     </Box>
                   )
                 })}
               </Stack>
             </Box>
-
-            <Typography variant="caption" sx={{ color: 'text.disabled', pl: 0.5 }}>
-              已完成 {doneCount} 个步骤，系统会继续更新当前阶段并在回答结束后保留完整轨迹。
-            </Typography>
           </Stack>
         </Collapse>
       </Stack>
@@ -635,34 +581,34 @@ export function ChatMessageList({
         <Paper
           key={message.id}
           sx={{
-            p: 2.25,
+            px: 2.25,
+            py: message.role === 'user' ? 1.4 : 2.25,
             maxWidth: '80%',
             alignSelf: message.role === 'user' ? 'flex-end' : 'flex-start',
             bgcolor: message.role === 'user' ? 'primary.main' : 'background.paper',
             color: message.role === 'user' ? 'primary.contrastText' : 'text.primary',
-            borderRadius: 4,
+            borderRadius: 0.9,
             border: message.role === 'user' ? '1px solid rgba(20, 20, 19, 0.08)' : '1px solid rgba(176, 174, 165, 0.22)',
             boxShadow: message.role === 'user' ? '0 12px 24px rgba(20, 20, 19, 0.1)' : '0 16px 34px rgba(20, 20, 19, 0.05)',
             background: message.role === 'user' ? undefined : 'linear-gradient(180deg, #fffdf8 0%, #f7f4eb 100%)',
           }}
         >
-          <Typography variant="caption" sx={{ opacity: 0.8 }}>
-            {message.role === 'user' ? '你' : 'AI'}
-          </Typography>
           {message.role === 'user' ? (
-            <Typography sx={{ whiteSpace: 'pre-wrap' }}>{message.content}</Typography>
+            <Typography sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.35 }}>{message.content}</Typography>
           ) : (
             <>
-              {(message.thinkingSteps?.length || message.agentTrace) ? (
+              <Typography variant="caption" sx={{ opacity: 0.8 }}>
+                AI
+              </Typography>
+              {(message.isStreaming || message.timeline?.length || message.agentTrace) ? (
                 <ThinkingSummaryPanel
-                  steps={message.thinkingSteps ?? []}
+                  timelineEvents={message.timeline ?? []}
                   trace={message.agentTrace ?? null}
                   active={Boolean(message.isStreaming)}
                 />
               ) : null}
               <AssistantContent content={message.content} references={message.references ?? []} />
               {message.references?.length ? <CitationList references={message.references} /> : null}
-              {message.agentTrace ? <AgentTraceSummary trace={message.agentTrace} /> : null}
               {message.isStreaming ? (
                 <Box component="span" sx={{ color: 'text.secondary' }}>
                   ▋

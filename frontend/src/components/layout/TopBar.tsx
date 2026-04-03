@@ -24,7 +24,7 @@ const PAGE_META: Record<string, { title: string; description: string }> = {
   },
 }
 
-export function TopBar() {
+export function TopBar({ centered = false }: { centered?: boolean }) {
   const location = useLocation()
   const pageMeta = PAGE_META[location.pathname] ?? PAGE_META['/memories']
 
@@ -41,10 +41,22 @@ export function TopBar() {
         backdropFilter: 'blur(10px)',
       }}
     >
-      <Toolbar sx={{ minHeight: 92, px: { xs: 2, md: 4 } }}>
+      <Toolbar
+        sx={{
+          minHeight: 120,
+          px: { xs: 2, md: 4 },
+          justifyContent: centered ? 'center' : 'flex-start',
+          transition: 'all 240ms ease',
+        }}
+      >
         <Box
           sx={{
             px: 0.25,
+            pt: 2,
+            pb: 1,
+            width: '100%',
+            maxWidth: centered ? 1340 : 'none',
+            transition: 'max-width 240ms ease',
           }}
         >
           <Typography

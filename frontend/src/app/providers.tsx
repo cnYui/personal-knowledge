@@ -19,7 +19,7 @@ export function AppProviders({ children }: PropsWithChildren) {
         },
         divider: 'rgba(176, 174, 165, 0.35)',
       },
-      shape: { borderRadius: 18 },
+      shape: { borderRadius: 6 },
       typography: {
         fontFamily: 'Lora, Georgia, serif',
         h4: {
@@ -91,10 +91,9 @@ export function AppProviders({ children }: PropsWithChildren) {
           },
           styleOverrides: {
             root: {
-              borderRadius: 999,
+              borderRadius: 6,
               paddingInline: 20,
               paddingBlock: 10,
-              lineHeight: 1,
             },
             contained: {
               backgroundColor: '#141413',
@@ -106,18 +105,12 @@ export function AppProviders({ children }: PropsWithChildren) {
               },
             },
             outlined: {
-              borderColor: 'rgba(217, 119, 87, 0.34)',
-              color: '#8d573d',
-              backgroundColor: 'rgba(217, 119, 87, 0.045)',
+              borderColor: 'rgba(176, 174, 165, 0.45)',
+              color: '#141413',
+              backgroundColor: 'rgba(255, 253, 248, 0.72)',
               '&:hover': {
-                borderColor: 'rgba(217, 119, 87, 0.5)',
-                backgroundColor: 'rgba(217, 119, 87, 0.1)',
-              },
-            },
-            text: {
-              color: '#8d573d',
-              '&:hover': {
-                backgroundColor: 'rgba(217, 119, 87, 0.08)',
+                borderColor: 'rgba(20, 20, 19, 0.32)',
+                backgroundColor: 'rgba(232, 230, 220, 0.4)',
               },
             },
           },
@@ -125,7 +118,7 @@ export function AppProviders({ children }: PropsWithChildren) {
         MuiChip: {
           styleOverrides: {
             root: {
-              borderRadius: 999,
+              borderRadius: 4,
               fontFamily: 'Poppins, Arial, sans-serif',
               fontWeight: 600,
               backgroundColor: 'rgba(232, 230, 220, 0.68)',
@@ -136,7 +129,7 @@ export function AppProviders({ children }: PropsWithChildren) {
         MuiAlert: {
           styleOverrides: {
             root: {
-              borderRadius: 16,
+              borderRadius: 4,
               border: '1px solid rgba(176, 174, 165, 0.24)',
             },
           },
@@ -149,7 +142,7 @@ export function AppProviders({ children }: PropsWithChildren) {
         MuiOutlinedInput: {
           styleOverrides: {
             root: {
-              borderRadius: 22,
+              borderRadius: 6,
               backgroundColor: 'rgba(255, 253, 248, 0.88)',
               transition: 'border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease',
               '&:hover': {

@@ -33,7 +33,7 @@ export function KnowledgeGraphPage() {
           sx={{
             flex: 1,
             height: '100%',
-            borderRadius: 4,
+            borderRadius: 0.9,
             overflow: 'hidden',
             bgcolor: 'rgba(255, 253, 248, 0.9)',
             border: '1px solid rgba(176, 174, 165, 0.22)',

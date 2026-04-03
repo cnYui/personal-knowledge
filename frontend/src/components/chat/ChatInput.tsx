@@ -16,7 +16,7 @@ export function ChatInput({ onSend, disabled }: { onSend: (message: string) => v
     <Paper
       sx={{
         p: 1.25,
-        borderRadius: 4,
+        borderRadius: 0.9,
         border: '1px solid rgba(176, 174, 165, 0.28)',
         backgroundColor: 'rgba(255, 253, 248, 0.92)',
         boxShadow: '0 16px 36px rgba(20, 20, 19, 0.06)',
@@ -45,6 +45,7 @@ export function ChatInput({ onSend, disabled }: { onSend: (message: string) => v
           sx={{
             bgcolor: 'primary.main',
             color: 'primary.contrastText',
+            borderRadius: 0.75,
             '&:hover': {
               bgcolor: '#20201e',
             },

@@ -12,7 +12,7 @@ export function ImageUploadPanel({ files, onChange }: { files: File[]; onChange:
           p: 2,
           border: '1px dashed',
           borderColor: 'divider',
-          borderRadius: 3,
+          borderRadius: 0.75,
           bgcolor: 'rgba(255,255,255,0.8)',
         }}
       >
@@ -21,7 +21,7 @@ export function ImageUploadPanel({ files, onChange }: { files: File[]; onChange:
             支持 PNG、JPG、JPEG、WEBP，可多选上传
           </Typography>
           <Box sx={{ display: 'flex', justifyContent: 'flex-start' }}>
-            <Button component="label" variant="outlined" startIcon={<UploadFileIcon />} sx={{ borderRadius: 999 }}>
+            <Button component="label" variant="outlined" startIcon={<UploadFileIcon />} sx={{ borderRadius: 0.75 }}>
               选择图片
               <input
                 hidden
@@ -34,7 +34,7 @@ export function ImageUploadPanel({ files, onChange }: { files: File[]; onChange:
           </Box>
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
             {files.map((file) => (
-              <Chip key={file.name} label={file.name} sx={{ borderRadius: 2 }} />
+              <Chip key={file.name} label={file.name} sx={{ borderRadius: 0.5 }} />
             ))}
           </Stack>
           {!files.length ? (

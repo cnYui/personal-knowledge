@@ -11,7 +11,7 @@ import {
   sendChatMessageStream,
 } from '../services/chatApi'
 import { ApiErrorPayload } from '../types/api'
-import { ChatMessage } from '../types/chat'
+import { ChatMessage, ChatTimelineEvent } from '../types/chat'
 
 export function useChatMessages() {
   return useQuery({
@@ -55,6 +55,17 @@ export function useSendChatMessage() {
     updateMessages((messages) =>
       messages.map((message) => (message.id === assistantId ? updater(message) : message))
     )
+  }
+
+  const upsertTimelineEvent = (events: ChatTimelineEvent[], nextEvent: ChatTimelineEvent): ChatTimelineEvent[] => {
+    const key = `${nextEvent.id}:${nextEvent.status}`
+    const filtered = events.filter((event) => `${event.id}:${event.status}` !== key)
+    filtered.push(nextEvent)
+    return filtered.sort((a, b) => {
+      if (a.order !== b.order) return a.order - b.order
+      if (a.id !== b.id) return a.id.localeCompare(b.id)
+      return a.status.localeCompare(b.status)
+    })
   }
 
   const stopTypingLoop = () => {
@@ -141,7 +152,7 @@ export function useSendChatMessage() {
       created_at: new Date().toISOString(),
       references: [],
       agentTrace: null,
-      thinkingSteps: [],
+      timeline: [],
       isStreaming: true,
     }
     activeAssistantIdRef.current = assistantId
@@ -162,12 +173,10 @@ export function useSendChatMessage() {
             references: refs,
           }))
         },
-        (summary) => {
+        (timelineEvent) => {
           updateAssistantDraft(assistantId, (draft) => ({
             ...draft,
-            thinkingSteps: draft.thinkingSteps?.includes(summary)
-              ? draft.thinkingSteps
-              : [...(draft.thinkingSteps ?? []), summary],
+            timeline: upsertTimelineEvent(draft.timeline ?? [], timelineEvent),
           }))
         },
         (trace) => {

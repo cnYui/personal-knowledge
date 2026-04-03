@@ -55,7 +55,7 @@ export function MemoryBubbleItem({
         sx={{
           px: 2,
           py: 1.65,
-          borderRadius: 4,
+          borderRadius: 0.9,
           cursor: 'pointer',
           maxWidth: { xs: '100%', md: '82%' },
           border: '1px solid',

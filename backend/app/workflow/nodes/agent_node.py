@@ -16,6 +16,14 @@ from app.workflow.nodes.base import WorkflowNode
 
 logger = logging.getLogger(__name__)
 
+FOCUS_EXTRACTION_SYSTEM_PROMPT = """你是一个问题理解助手。
+请将用户问题提炼为 2 到 4 个简短的中文检索重点短语。
+要求：
+1. 只返回短语本身。
+2. 使用 " / " 分隔。
+3. 不要输出序号、解释或其他文字。
+"""
+
 
 class _CanvasGraphRetrievalTool:
     name = GraphRetrievalTool.name
@@ -277,6 +285,20 @@ class AgentNode(WorkflowNode):
             user_prompt=user_prompt,
         )
 
+    async def _extract_focus_points(self, query: str) -> str:
+        if not query:
+            return ''
+        try:
+            summary = await self._complete_text(
+                system_prompt=FOCUS_EXTRACTION_SYSTEM_PROMPT,
+                user_prompt=query,
+            )
+            normalized = str(summary or '').strip().replace('\n', ' ')
+            return normalized or query
+        except Exception:
+            logger.debug('Failed to extract focus points, falling back to raw query.', exc_info=True)
+            return query
+
     def _result_payload(self, *, answer: str, references: list[Any], trace: AgentTrace) -> dict[str, Any]:
         return {
             'answer': answer,
@@ -301,12 +323,28 @@ class AgentNode(WorkflowNode):
             group_id=group_id,
         )
 
+        def emit_timeline(event: dict[str, Any]) -> None:
+            canvas.emit_runtime_event(event)
+
+        focus_points = await self._extract_focus_points(query)
+        emit_timeline(
+            {
+                'type': 'timeline',
+                'id': 'understand-question',
+                'kind': 'understand',
+                'title': '理解问题',
+                'detail': f'已提炼检索重点：{focus_points}',
+                'status': 'done',
+            }
+        )
+
         tool_loop_result = await self._get_tool_loop_engine().run(
             messages=self._build_messages(context, query),
             tool_schemas=[self._tool_schema()],
             tool_registry={graph_tool.name: graph_tool},
             system_prompt=system_prompt,
             completion_kwargs={'temperature': float(self.config.get('temperature', 0.2))},
+            event_callback=emit_timeline,
         )
 
         for step in tool_loop_result.steps:
@@ -351,6 +389,16 @@ class AgentNode(WorkflowNode):
         retrieval_result = self._combine_retrieval_results(graph_tool.results)
 
         if not tool_loop_result.steps:
+            emit_timeline(
+                {
+                    'type': 'timeline',
+                    'id': 'final-answer',
+                    'kind': 'answer',
+                    'title': '直接回答',
+                    'detail': '本轮问题无需检索，Agent 直接生成回答。',
+                    'status': 'started',
+                }
+            )
             answer = tool_loop_result.answer.strip()
             if not answer:
                 answer = await self._answer_with_general_model(query, None)
@@ -368,6 +416,16 @@ class AgentNode(WorkflowNode):
             return result
 
         if retrieval_result.has_enough_evidence:
+            emit_timeline(
+                {
+                    'type': 'timeline',
+                    'id': 'final-answer',
+                    'kind': 'answer',
+                    'title': '组织最终回答',
+                    'detail': 'Agent 已停止继续检索，正在基于当前证据生成最终回答。',
+                    'status': 'started',
+                }
+            )
             answer = tool_loop_result.answer.strip()
             if not answer:
                 knowledge_result = await self._get_knowledge_graph_service().answer_with_context(
@@ -395,6 +453,16 @@ class AgentNode(WorkflowNode):
             context.set_global(output_key, result)
             return result
 
+        emit_timeline(
+            {
+                'type': 'timeline',
+                'id': 'final-answer',
+                'kind': 'answer',
+                'title': '补充通用回答',
+                'detail': '知识库证据不足，正在补充通用模型回答并保留已有引用。',
+                'status': 'started',
+            }
+        )
         fallback_answer = tool_loop_result.answer.strip()
         if not fallback_answer:
             fallback_answer = await self._answer_with_general_model(query, retrieval_result)

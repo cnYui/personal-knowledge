@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Any
@@ -90,63 +91,63 @@ class ChatService:
         }
         return trace_payload
 
-    def _thinking_message_from_event(self, event: Any) -> str | None:
-        if event.event == 'workflow_started':
-            return '已创建工作流，正在整理问题与上下文。'
-        if event.event == 'node_started' and event.node_id == 'begin':
-            return '正在初始化本轮对话输入。'
+    def _timeline_chunk(
+        self,
+        *,
+        event_id: str,
+        kind: str,
+        title: str,
+        detail: str,
+        status: str,
+        order: int,
+        preview_items: list[str] | None = None,
+        preview_total: int | None = None,
+    ) -> str:
+        payload = {
+            'type': 'timeline',
+            'content': {
+                'id': event_id,
+                'kind': kind,
+                'title': title,
+                'detail': detail,
+                'status': status,
+                'order': order,
+                'preview_items': preview_items or [],
+                'preview_total': preview_total,
+            },
+        }
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    def _timeline_chunks_from_canvas_event(self, event: Any, order: int) -> list[str]:
+        chunks: list[str] = []
+
         if event.event == 'node_started' and event.node_id == 'agent':
-            return 'Agent 已接管本轮会话，正在决定是否调用知识检索工具。'
-        if event.event == 'node_started' and event.node_id == 'message':
-            return '正在组织最终回答。'
-        if event.event == 'workflow_finished':
-            return '工作流执行完成，准备返回结果。'
-        return None
+            chunks.append(
+                self._timeline_chunk(
+                    event_id='understand-question',
+                    kind='understand',
+                    title='理解问题',
+                    detail='正在理解你的问题。',
+                    status='started',
+                    order=order,
+                )
+            )
 
-    def _thinking_messages_from_agent_output(self, agent_output: dict[str, Any] | None) -> list[str]:
-        if not agent_output:
-            return []
+        return chunks
 
-        messages: list[str] = []
-        workflow_debug = agent_output.get('workflow_debug') or {}
-        tool_steps = workflow_debug.get('tool_steps') or []
-        if tool_steps:
-            for step in tool_steps:
-                round_index = int(step.get('round_index', 0)) + 1
-                arguments = step.get('arguments') or {}
-                query = str(arguments.get('query') or '').strip()
-                result_summary = step.get('result_summary') or {}
-                retrieved_edge_count = result_summary.get('retrieved_edge_count')
-                has_enough_evidence = result_summary.get('has_enough_evidence')
-
-                message = f'检索第 {round_index} 轮：'
-                if query:
-                    message += f' 已使用“{query}”查询知识图谱'
-                else:
-                    message += ' 已发起知识图谱查询'
-                if retrieved_edge_count is not None:
-                    message += f'，命中 {retrieved_edge_count} 条图谱证据'
-                if has_enough_evidence is True:
-                    message += '，当前证据已足够。'
-                elif has_enough_evidence is False:
-                    message += '，当前证据仍不足。'
-                else:
-                    message += '。'
-                messages.append(message)
-
-        trace = agent_output.get('agent_trace')
-        if isinstance(trace, dict):
-            final_action = str(trace.get('final_action') or '')
-        else:
-            final_action = getattr(trace, 'final_action', '') if trace is not None else ''
-        if final_action == 'direct_general_answer':
-            messages.append('本轮问题无需检索，Agent 直接生成回答。')
-        elif final_action == 'kb_grounded_answer':
-            messages.append('知识库证据充足，正在生成基于证据的回答。')
-        elif final_action == 'kb_plus_general_answer':
-            messages.append('知识库证据不足，正在补充通用模型回答。')
-
-        return messages
+    def _timeline_chunk_from_runtime_event(self, event: dict[str, Any], order: int) -> str | None:
+        if event.get('type') != 'timeline':
+            return None
+        return self._timeline_chunk(
+            event_id=str(event.get('id') or f'runtime-{order}'),
+            kind=str(event.get('kind') or 'canvas'),
+            title=str(event.get('title') or '执行步骤'),
+            detail=str(event.get('detail') or ''),
+            status=str(event.get('status') or 'started'),
+            order=order,
+            preview_items=event.get('preview_items') if isinstance(event.get('preview_items'), list) else None,
+            preview_total=event.get('preview_total') if isinstance(event.get('preview_total'), int) else None,
+        )
 
     async def _run_chat_canvas(self, message: str, *, group_id: str = 'default') -> dict[str, Any]:
         if self.canvas_factory is None:
@@ -226,9 +227,34 @@ class ChatService:
             agent_output: dict[str, Any] | None = None
             message_output: dict[str, Any] | None = None
             canvas_events: list[dict[str, Any]] = []
-            seen_thinking_messages: set[str] = set()
+            timeline_order = 1
+            queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
-            async for event in canvas.run():
+            def runtime_event_sink(event: dict[str, Any]) -> None:
+                queue.put_nowait(('runtime', event))
+
+            canvas.set_runtime_event_sink(runtime_event_sink)
+
+            async def produce_canvas_events() -> None:
+                async for event in canvas.run():
+                    await queue.put(('canvas', event))
+                await queue.put(('done', None))
+
+            producer_task = asyncio.create_task(produce_canvas_events())
+
+            while True:
+                source, payload = await queue.get()
+                if source == 'done':
+                    break
+
+                if source == 'runtime':
+                    chunk = self._timeline_chunk_from_runtime_event(payload, timeline_order)
+                    if chunk:
+                        yield chunk
+                        timeline_order += 1
+                    continue
+
+                event = payload
                 if event.node_id:
                     canvas_events.append(
                         {
@@ -238,27 +264,31 @@ class ChatService:
                         }
                     )
 
-                thinking_message = self._thinking_message_from_event(event)
-                if thinking_message and thinking_message not in seen_thinking_messages:
-                    seen_thinking_messages.add(thinking_message)
-                    yield f"data: {json.dumps({'type': 'thinking', 'content': thinking_message}, ensure_ascii=False)}\n\n"
+                for chunk in self._timeline_chunks_from_canvas_event(event, timeline_order):
+                    yield chunk
+                    timeline_order += 1
 
                 if event.event != 'node_finished':
                     continue
                 if event.node_id == 'agent':
                     agent_output = event.payload.get('output') or {}
-                    for detail_message in self._thinking_messages_from_agent_output(agent_output):
-                        if detail_message in seen_thinking_messages:
-                            continue
-                        seen_thinking_messages.add(detail_message)
-                        yield f"data: {json.dumps({'type': 'thinking', 'content': detail_message}, ensure_ascii=False)}\n\n"
                 elif event.node_id == 'message':
                     message_output = event.payload.get('output') or {}
+
+            await producer_task
 
             if message_output is None:
                 raise RuntimeError('Canvas workflow did not produce a message output')
 
-            yield f"data: {json.dumps({'type': 'thinking', 'content': '正在整理引用与可解释轨迹。'}, ensure_ascii=False)}\n\n"
+            yield self._timeline_chunk(
+                event_id='citation',
+                kind='citation',
+                title='整理引用与轨迹',
+                detail='正在整理引用与可解释轨迹。',
+                status='started',
+                order=timeline_order,
+            )
+            timeline_order += 1
 
             citation_result = self.citation_postprocessor.process(
                 answer=str(message_output.get('content') or ''),
@@ -276,6 +306,23 @@ class ChatService:
                 citation_result=citation_result,
                 reference_store_snapshot=reference_store_snapshot,
                 workflow_debug=(agent_output or {}).get('workflow_debug'),
+            )
+            yield self._timeline_chunk(
+                event_id='citation',
+                kind='citation',
+                title='整理引用与轨迹',
+                detail='引用与可解释轨迹已整理完成。',
+                status='done',
+                order=timeline_order,
+            )
+            timeline_order += 1
+            yield self._timeline_chunk(
+                event_id='final-answer',
+                kind='answer',
+                title='最终回答完成',
+                detail='最终回答已生成完成。',
+                status='done',
+                order=timeline_order,
             )
             result = {
                 'answer': citation_result.answer,

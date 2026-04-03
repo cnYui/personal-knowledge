@@ -65,7 +65,7 @@ export function UploadForm({
     <Paper
       sx={{
         p: 3,
-        borderRadius: 4,
+        borderRadius: 0.9,
         border: '1px solid',
         borderColor: 'divider',
         boxShadow: '0 16px 34px rgba(20, 20, 19, 0.05)',
@@ -90,12 +90,27 @@ export function UploadForm({
             multiline
             minRows={8}
             fullWidth
+            InputProps={{
+              sx: {
+                alignItems: 'stretch',
+                '& textarea': {
+                  pb: 7,
+                },
+              },
+            }}
           />
           <Button
             variant="outlined"
             onClick={handleOptimize}
             disabled={optimizing || loading || !content.trim()}
-            sx={{ position: 'absolute', top: 10, right: 10, borderRadius: 999 }}
+            sx={{
+              position: 'absolute',
+              right: 14,
+              bottom: 14,
+              borderRadius: 0.75,
+              minWidth: 116,
+              backgroundColor: 'rgba(250, 249, 245, 0.92)',
+            }}
             startIcon={optimizing ? <CircularProgress size={16} /> : null}
           >
             {optimizing ? '优化中...' : '一键优化'}
@@ -105,7 +120,7 @@ export function UploadForm({
         <ImageUploadPanel files={images} onChange={setImages} />
 
         <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Button variant="contained" onClick={handleSubmit} disabled={loading} sx={{ minWidth: 132, borderRadius: 999 }}>
+          <Button variant="contained" onClick={handleSubmit} disabled={loading} sx={{ minWidth: 132, borderRadius: 0.75 }}>
             {loading ? '上传中...' : '上传记忆'}
           </Button>
         </Box>

@@ -100,7 +100,7 @@ export function KnowledgeGraphVisualization({ data, selectedNodeId, onNodeClick 
               p: 2,
               bgcolor: 'rgba(255, 253, 248, 0.92)',
               border: '1px solid rgba(176, 174, 165, 0.28)',
-              borderRadius: 3,
+              borderRadius: 0.75,
               boxShadow: '0 12px 28px rgba(20, 20, 19, 0.05)',
             }}
           >
