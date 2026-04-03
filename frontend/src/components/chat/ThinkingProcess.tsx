@@ -145,20 +145,20 @@ function buildThinkingTimeline(timelineEvents: ChatTimelineEvent[], trace: Agent
     ]
   }
 
-  return [
-    {
-      key: 'idle',
-      label: '执行过程',
-      detail: '本轮执行轨迹将在这里显示。',
-      status: 'done' as const,
-    },
-  ]
+  // 如果不是active状态且没有任何timeline数据，返回null而不是idle
+  return null
 }
 
 export function ThinkingProcess({ timelineEvents, trace, active = false }: ThinkingProcessProps) {
   const [expanded, setExpanded] = useState(false)
   const [typedDetail, setTypedDetail] = useState('')
   const timeline = useMemo(() => buildThinkingTimeline(timelineEvents, trace, active), [timelineEvents, trace, active])
+  
+  // 如果没有有效的时间线，不显示组件
+  if (!timeline || timeline.length === 0) {
+    return null
+  }
+  
   const currentStep = timeline[timeline.length - 1]
 
   useEffect(() => {
@@ -198,11 +198,6 @@ export function ThinkingProcess({ timelineEvents, trace, active = false }: Think
 
   const currentDetail = currentStep.placeholder ? typedDetail || ' ' : currentStep.detail
   const stepCount = timeline.length
-
-  // 如果没有有效的时间线，不显示组件
-  if (!currentStep || currentStep.key === 'idle') {
-    return null
-  }
 
   return (
     <Box sx={{ mb: 1 }}>
