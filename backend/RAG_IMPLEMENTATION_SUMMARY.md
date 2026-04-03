@@ -15,7 +15,7 @@ Personal Knowledge Base 已成功实现基于 Graphiti 知识图谱的 RAG（检
 - 实现了完整的 RAG 流程：
   1. 使用 Graphiti 搜索知识图谱
   2. 提取实体和关系作为上下文
-  3. 使用 StepFun LLM 生成回答
+  3. 使用运行时对话模型生成回答
 - 支持中文问答
 - 提供引用来源（实体和关系）
 
@@ -124,7 +124,7 @@ GraphitiClient.search()
     ↓
 构建上下文
     ↓
-StepFun LLM 生成回答
+运行时对话模型生成回答
     ↓
 返回回答 + 引用
 ```
@@ -156,10 +156,11 @@ StepFun LLM 生成回答
 ### 环境变量
 
 ```env
-# StepFun API (用于 LLM)
-OPENAI_API_KEY=your_stepfun_api_key
-OPENAI_BASE_URL=https://api.stepfun.com/v1
-OPENAI_MODEL=step-1-8k
+# Runtime dialog model
+DIALOG_API_KEY=your_dialog_api_key
+
+# Runtime knowledge build model
+KNOWLEDGE_BUILD_API_KEY=your_knowledge_build_api_key
 
 # Neo4j (知识图谱存储)
 NEO4J_URI=bolt://localhost:7687
@@ -170,7 +171,7 @@ NEO4J_PASSWORD=your_password
 ### 关键参数
 
 - **搜索结果数量**: 默认 5 条（可调整）
-- **LLM 模型**: step-1-8k
+- **LLM 模型**: `deepseek-chat`（默认，可通过运行时配置覆盖）
 - **最大 tokens**: 1024（回答生成）
 - **温度**: 0.7（平衡创造性和准确性）
 
@@ -229,14 +230,14 @@ MATCH ()-[r]->() RETURN r LIMIT 25
 
 ## Agentic Graph RAG Upgrade
 
-当前聊天链路已经从固定的 Graph RAG 流程升级为严格模式的 Agentic Graph RAG。系统在 `ChatService` 与图谱 RAG 能力之间新增了 `AgentService`，用于统一控制闲聊分流、图谱检索工具调用和最终回答生成。
+当前聊天链路已经从固定的 Graph RAG 流程升级为基于 Canvas 的 Agentic Graph RAG。系统通过 `Canvas -> AgentNode -> ToolLoopEngine` 驱动单工具多跳检索，并在回答后统一做 citation 后处理。
 
 ### 新增能力
 
 - `graph_retrieval_tool` 将 Graphiti 图谱检索包装为结构化工具输出，返回 `context`、`references`、`has_enough_evidence` 等字段
-- `AgentService` 对明显闲聊直接返回中文应答，不触发图谱检索
-- 对非闲聊问题，`AgentService` 强制先调用 `graph_retrieval_tool`，再基于证据调用 `KnowledgeGraphService.answer_with_context(...)`
-- 流式问答路径也统一走 `AgentService`，并保持 `references -> content -> done` 的 SSE 事件顺序
+- `AgentNode` 直接绑定 `graph_retrieval_tool` 给 `ToolLoopEngine`
+- 模型在 tool loop 中自己决定是否检索、是否继续检索、何时停止并回答
+- 流式问答路径统一走 Canvas 主链，并保持 `thinking -> references -> content -> done` 的 SSE 事件顺序
 
 ### 关键结构变化
 
@@ -244,15 +245,15 @@ MATCH ()-[r]->() RETURN r LIMIT 25
   - `retrieve_graph_context(...)`：只负责图谱检索与证据整理
   - `answer_with_context(...)`：只负责基于证据生成最终回答
   - `answer_with_context_stream(...)`：负责流式生成证据约束下的回答
-- `ChatService` 不再直接调用 `KnowledgeGraphService.ask()`，而是统一通过 `AgentService` 进入严格模式代理层
-- 检索为空时，系统会明确返回“图谱中没有足够信息”，而不是自由发挥
+- `ChatService` 不再直接调用 `KnowledgeGraphService.ask()`，而是统一通过 Canvas workflow 进入 Agent 主链
+- 检索为空时，系统会明确返回“图谱中没有足够信息”，必要时再显式标注通用模型补充
 
 ### 当前实现边界
 
 - 当前版本仍是单工具、单知识源的 Agentic RAG
 - 知识来源仍然只有 Graphiti 时序知识图谱
-- 已引入受控的二轮检索能力：当第一轮图谱检索无足够证据时，`AgentService` 会调用内部检索规划器决定是否进行一次 query rewrite 后重检索
-- 当前仍未引入多工具协同、外部 Web 搜索或更复杂的 planner / reflection
+- 多跳通过 `ToolLoopEngine` 驱动，而不是显式 planner 路由
+- 当前仍未引入多工具协同和外部 Web 搜索
 
 ---
 

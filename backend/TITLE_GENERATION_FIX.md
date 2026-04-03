@@ -18,7 +18,7 @@
 
 ### 1. TitleGenerator 服务 (`app/services/title_generator.py`)
 
-- 使用 StepFun API 的 `step-1-8k` 模型生成标题
+- 使用运行时对话模型生成标题
 - 根据记忆内容生成简洁、准确的标题(不超过 30 字)
 - 自动截断过长的内容(保留前 500 字符)
 - 包含错误处理和日志记录
@@ -41,7 +41,7 @@
 2. 后端创建记忆,标题设为"标题生成中",状态为 `pending`
 3. 记忆 ID 被加入标题生成队列
 4. TitleGenerationWorker 从队列中取出任务
-5. 调用 StepFun API 生成标题
+5. 调用运行时对话模型生成标题
 6. 更新数据库,将标题和状态改为 `ready`
 7. 前端轮询检测到状态变化,隐藏"标题抽取中"提示
 
@@ -58,11 +58,10 @@ python test_title_generation.py
 
 ## 配置要求
 
-需要在 `.env` 文件中配置 StepFun API:
+需要在 `.env` 文件中配置运行时对话模型:
 
 ```env
-OPENAI_API_KEY=your_stepfun_api_key
-OPENAI_BASE_URL=https://api.stepfun.com/v1
+DIALOG_API_KEY=your_dialog_api_key
 ```
 
 ## 性能特点

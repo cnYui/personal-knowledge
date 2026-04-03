@@ -2,15 +2,15 @@
 
 ## 🎉 集成成功
 
-Personal Knowledge Base 已成功集成 Graphiti 知识图谱功能,使用 StepFun API 进行 LLM 处理,本地 sentence-transformers 模型进行 embedding。
+Personal Knowledge Base 已成功集成 Graphiti 知识图谱功能。当前系统使用运行时模型配置驱动图谱构建与对话，本地 `sentence-transformers` 模型负责 embedding。
 
 ## ✅ 已完成的工作
 
-### 1. StepFun API 集成
-- 创建了自定义的 `StepFunLLMClient`,适配 StepFun 的 OpenAI 兼容 API
-- 配置了 `step-1-8k` 模型用于文本生成
-- 解决了 token 限制问题(max_tokens=2048,适配 8192 token 上下文)
-- 处理了 StepFun 不支持 OpenAI `responses.parse` API 的兼容性问题
+### 1. 运行时模型集成
+- 图谱构建模型通过 `KNOWLEDGE_BUILD_*` 运行时配置提供
+- 对话模型通过 `DIALOG_*` 运行时配置提供
+- 默认使用 DeepSeek 兼容接口
+- 支持热更新 API Key，并立即作用于新请求
 
 ### 2. 本地 Embedding 模型
 - 使用 `sentence-transformers` 的 `paraphrase-multilingual-MiniLM-L12-v2` 模型
@@ -34,7 +34,7 @@ Personal Knowledge Base 已成功集成 Graphiti 知识图谱功能,使用 StepF
 最新测试显示:
 - ✅ 4 个记忆成功添加到知识图谱
 - ⏳ 2 个记忆正在处理中
-- ❌ 14 个记忆失败(主要是早期测试时的 API 配置问题和速率限制)
+- ❌ 14 个记忆失败(主要是早期测试时的模型配置问题和速率限制)
 
 ## 🚀 如何使用
 
@@ -92,10 +92,9 @@ GET /api/memories/{memory_id}/graph-status
 ### 环境变量 (.env)
 
 ```env
-# StepFun API
-OPENAI_API_KEY=your_stepfun_api_key
-OPENAI_BASE_URL=https://api.stepfun.com/v1
-OPENAI_MODEL=step-1-8k
+# Runtime model configuration
+DIALOG_API_KEY=your_dialog_api_key
+KNOWLEDGE_BUILD_API_KEY=your_knowledge_build_api_key
 
 # Neo4j
 NEO4J_URI=bolt://localhost:7687
@@ -105,7 +104,8 @@ NEO4J_PASSWORD=your_password
 
 ### 关键配置
 
-- **LLM Model**: `step-1-8k` (StepFun)
+- **Dialog Model**: `deepseek-chat`（默认，可通过运行时配置覆盖）
+- **Knowledge Build Model**: `deepseek-chat`（默认，可通过运行时配置覆盖）
 - **Max Tokens**: 2048 (适配 8192 token 上下文限制)
 - **Embedding Model**: `paraphrase-multilingual-MiniLM-L12-v2` (本地)
 - **异步处理**: asyncio.Queue
@@ -114,9 +114,9 @@ NEO4J_PASSWORD=your_password
 
 ### StepFunLLMClient
 
-自定义 LLM 客户端,解决了以下问题:
+项目保留了兼容的 OpenAI-style 客户端封装，但当前运行时主链已经统一通过模型配置中心驱动。相关兼容层主要解决了以下问题:
 
-1. **API 兼容性**: StepFun 使用标准 `chat.completions` API,不支持 OpenAI 的 `responses.parse`
+1. **API 兼容性**: 使用标准 `chat.completions` 接口适配兼容提供方
 2. **Token 限制**: 强制使用配置的 max_tokens,避免超出模型限制
 3. **JSON 模式**: 使用 `response_format={'type': 'json_object'}` 进行结构化输出
 4. **响应解析**: 将 JSON 响应解析为 Pydantic 模型
@@ -132,8 +132,8 @@ NEO4J_PASSWORD=your_password
 
 ## ⚠️ 已知限制
 
-1. **速率限制**: StepFun API 有速率限制,批量处理时可能需要等待
-2. **Token 限制**: `step-1-8k` 模型上下文限制为 8192 tokens,max_tokens 设置为 2048
+1. **速率限制**: 模型服务存在速率限制,批量处理时可能需要等待
+2. **Token 限制**: 当前默认模型上下文与输出长度仍受上游服务限制
 3. **处理时间**: 每个记忆的图谱处理需要 10-30 秒(取决于内容复杂度)
 
 ## 🔍 调试工具

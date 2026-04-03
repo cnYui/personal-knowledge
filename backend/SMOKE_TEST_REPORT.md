@@ -79,7 +79,7 @@
 **后台处理**:
 - GraphitiIngestWorker 从队列中取出任务
 - 调用 Graphiti SDK 处理记忆内容
-- 使用 StepFun API 进行 LLM 处理
+- 使用运行时模型配置进行 LLM 处理
 - 使用本地 embedding 模型生成向量
 - 将结果存储到 Neo4j 知识图谱
 
@@ -101,7 +101,7 @@
 
 **注意**: 图谱处理是异步的,可能需要 10-60 秒完成,取决于:
 - 内容复杂度
-- StepFun API 响应时间
+- 模型服务响应时间
 - Neo4j 写入速度
 
 ---
