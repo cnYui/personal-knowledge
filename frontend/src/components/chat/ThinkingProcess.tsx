@@ -156,5 +156,94 @@ function buildThinkingTimeline(timelineEvents: ChatTimelineEvent[], trace: Agent
 }
 
 export function ThinkingProcess({ timelineEvents, trace, active = false }: ThinkingProcessProps) {
-  return null
+  const [expanded, setExpanded] = useState(false)
+  const [typedDetail, setTypedDetail] = useState('')
+  const timeline = useMemo(() => buildThinkingTimeline(timelineEvents, trace, active), [timelineEvents, trace, active])
+  const currentStep = timeline[timeline.length - 1]
+
+  useEffect(() => {
+    if (!currentStep?.placeholder) {
+      setTypedDetail(currentStep?.detail ?? '')
+      return
+    }
+
+    let frame = 0
+    let typingLength = 0
+    let deleting = false
+    const fullText = currentStep.detail
+
+    const timer = window.setInterval(() => {
+      if (!deleting) {
+        typingLength = Math.min(fullText.length, typingLength + 1)
+        setTypedDetail(fullText.slice(0, typingLength))
+        if (typingLength === fullText.length) {
+          frame += 1
+          if (frame >= 12) {
+            deleting = true
+            frame = 0
+          }
+        }
+        return
+      }
+
+      typingLength = Math.max(0, typingLength - 1)
+      setTypedDetail(fullText.slice(0, typingLength))
+      if (typingLength === 0) {
+        deleting = false
+      }
+    }, 55)
+
+    return () => window.clearInterval(timer)
+  }, [currentStep])
+
+  const currentDetail = currentStep.placeholder ? typedDetail || ' ' : currentStep.detail
+  const stepCount = timeline.length
+
+  // 如果没有有效的时间线，不显示组件
+  if (!currentStep || currentStep.key === 'idle') {
+    return null
+  }
+
+  return (
+    <Box sx={{ mb: 1 }}>
+      <Box
+        onClick={() => setExpanded((value) => !value)}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.5,
+          cursor: 'pointer',
+          userSelect: 'none',
+          '&:hover': {
+            opacity: 0.8,
+          },
+        }}
+      >
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+            lineHeight: 1.4,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            flex: 1,
+          }}
+        >
+          {currentDetail}
+          {!active && stepCount > 1 && ` · 共${stepCount}步`}
+        </Typography>
+        <ExpandMoreIcon
+          sx={{
+            fontSize: 16,
+            color: 'text.secondary',
+            transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
+            transition: 'transform 180ms ease',
+          }}
+        />
+      </Box>
+
+      {/* 展开内容将在下一个任务实现 */}
+    </Box>
+  )
 }
