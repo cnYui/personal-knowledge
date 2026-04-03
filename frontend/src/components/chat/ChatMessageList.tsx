@@ -1,5 +1,4 @@
-import { Box, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material'
-import { useMemo } from 'react'
+import { Box, Paper, Stack, Tooltip, Typography } from '@mui/material'
 
 import { ChatMessage, ChatReference } from '../../types/chat'
 import { MarkdownContent } from './MarkdownContent'
@@ -140,13 +139,11 @@ export function ChatMessageList({
               alignSelf: 'flex-start',
             }}
           >
-            {(message.isStreaming || message.timeline?.length || message.agentTrace) ? (
-              <ThinkingProcess
-                timelineEvents={message.timeline ?? []}
-                trace={message.agentTrace ?? null}
-                active={Boolean(message.isStreaming)}
-              />
-            ) : null}
+            <ThinkingProcess
+              timelineEvents={message.timeline ?? []}
+              trace={message.agentTrace ?? null}
+              active={Boolean(message.isStreaming)}
+            />
             <AssistantContent content={message.content} references={message.references ?? []} />
             {message.references?.length ? <CitationList references={message.references} /> : null}
             {message.isStreaming ? (
