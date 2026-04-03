@@ -153,13 +153,7 @@ export function ThinkingProcess({ timelineEvents, trace, active = false }: Think
   const [expanded, setExpanded] = useState(false)
   const [typedDetail, setTypedDetail] = useState('')
   const timeline = useMemo(() => buildThinkingTimeline(timelineEvents, trace, active), [timelineEvents, trace, active])
-  
-  // 如果没有有效的时间线，不显示组件
-  if (!timeline || timeline.length === 0) {
-    return null
-  }
-  
-  const currentStep = timeline[timeline.length - 1]
+  const currentStep = timeline?.[timeline.length - 1]
 
   useEffect(() => {
     if (!currentStep?.placeholder) {
@@ -196,8 +190,13 @@ export function ThinkingProcess({ timelineEvents, trace, active = false }: Think
     return () => window.clearInterval(timer)
   }, [currentStep])
 
-  const currentDetail = currentStep.placeholder ? typedDetail || ' ' : currentStep.detail
-  const stepCount = timeline.length
+  const currentDetail = currentStep?.placeholder ? typedDetail || ' ' : currentStep?.detail ?? ''
+  const stepCount = timeline?.length ?? 0
+
+  // 如果没有有效的时间线，不显示组件（在所有hooks之后）
+  if (!timeline || timeline.length === 0 || !currentStep) {
+    return null
+  }
 
   return (
     <Box sx={{ mb: 1 }}>
