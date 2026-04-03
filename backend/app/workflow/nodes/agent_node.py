@@ -9,6 +9,10 @@ from app.services.agent_prompts import (
     GENERAL_FALLBACK_SYSTEM_PROMPT,
     STRICT_AGENT_SYSTEM_PROMPT,
 )
+from app.services.agent_knowledge_profile_service import (
+    AgentKnowledgeProfileService,
+    agent_knowledge_profile_service,
+)
 from app.services.agent_tools.graph_retrieval_tool import GraphRetrievalTool
 from app.services.knowledge_graph_service import KnowledgeGraphService
 from app.workflow.engine.tool_loop import ToolLoopEngine
@@ -84,6 +88,7 @@ class AgentNode(WorkflowNode):
         knowledge_graph_service: KnowledgeGraphService | None = None,
         graph_retrieval_tool: GraphRetrievalTool | None = None,
         llm_client: Any | None = None,
+        knowledge_profile_service: AgentKnowledgeProfileService | None = None,
     ) -> None:
         super().__init__(spec)
         shared_knowledge_graph_service = knowledge_graph_service or getattr(
@@ -92,6 +97,7 @@ class AgentNode(WorkflowNode):
         self.knowledge_graph_service = shared_knowledge_graph_service
         self.graph_retrieval_tool = graph_retrieval_tool
         self.llm_client = llm_client or getattr(shared_knowledge_graph_service, 'llm_client', None)
+        self.knowledge_profile_service = knowledge_profile_service or agent_knowledge_profile_service
         self.tool_loop_engine = tool_loop_engine
         self.max_rounds = int(self.config.get('max_rounds', 2))
         self.model = self.config.get('model')
@@ -310,7 +316,8 @@ class AgentNode(WorkflowNode):
         query_ref = self.config.get('query_ref', 'sys.query')
         group_id = self.config.get('group_id', 'default')
         output_key = self.config.get('output_key', f'{self.node_id}.result')
-        system_prompt = self.config.get('system_prompt', STRICT_AGENT_SYSTEM_PROMPT)
+        base_system_prompt = self.config.get('system_prompt', STRICT_AGENT_SYSTEM_PROMPT)
+        system_prompt = self.knowledge_profile_service.compose_system_prompt(base_system_prompt)
         query = self.resolve_reference(query_ref, context) if isinstance(query_ref, str) else query_ref
         query = self._normalize_query(str(query or ''))
 

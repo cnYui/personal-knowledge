@@ -48,8 +48,9 @@ async def test_process_memory_success(mock_session_local, mock_graphiti_client):
     mock_client_instance = Mock()
     mock_client_instance.add_memory_episode = AsyncMock(return_value='episode-uuid-456')
     mock_graphiti_client.return_value = mock_client_instance
+    mock_scheduler = Mock()
     
-    worker = GraphitiIngestWorker()
+    worker = GraphitiIngestWorker(profile_refresh_scheduler=mock_scheduler)
     worker.repository = mock_repository
     
     # Process memory
@@ -62,6 +63,7 @@ async def test_process_memory_success(mock_session_local, mock_graphiti_client):
     assert mock_memory.graph_episode_uuid == 'episode-uuid-456'
     assert mock_memory.graph_added_at is not None
     assert mock_memory.graph_error is None
+    mock_scheduler.request_refresh.assert_called_once_with(reason='graph_ingest_success')
     mock_db.commit.assert_called()
     mock_db.close.assert_called_once()
 

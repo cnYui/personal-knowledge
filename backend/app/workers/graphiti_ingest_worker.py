@@ -6,6 +6,10 @@ from graphiti_core.llm_client.errors import RateLimitError
 
 from app.core.database import SessionLocal
 from app.repositories.memory_repository import MemoryRepository
+from app.services.agent_knowledge_profile_refresh import (
+    AgentKnowledgeProfileRefreshScheduler,
+    agent_knowledge_profile_refresh_scheduler,
+)
 from app.services.graphiti_client import GraphitiClient
 
 logger = logging.getLogger(__name__)
@@ -18,11 +22,16 @@ GRAPH_BUILD_TIMEOUT_SECONDS = 90
 class GraphitiIngestWorker:
     """Background worker that processes memory ingestion into knowledge graph."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        profile_refresh_scheduler: AgentKnowledgeProfileRefreshScheduler | None = None,
+    ):
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.running = False
         self.graphiti_client = GraphitiClient()
         self.repository = MemoryRepository()
+        self.profile_refresh_scheduler = profile_refresh_scheduler or agent_knowledge_profile_refresh_scheduler
         self._task = None
 
     async def start(self):
@@ -86,6 +95,7 @@ class GraphitiIngestWorker:
             db.commit()
 
             logger.info('知识图谱构建完成: memory_id=%s, episode_uuid=%s', memory_id, episode_uuid)
+            self.profile_refresh_scheduler.request_refresh(reason='graph_ingest_success')
 
         except Exception as e:
             logger.error(f'Failed to process memory {memory_id}: {e}', exc_info=True)

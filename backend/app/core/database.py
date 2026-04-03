@@ -26,7 +26,7 @@ def get_db():
 
 def init_db():
     """Initialize database tables. Should be called before starting the application."""
-    from app.models import ChatMessage, Memory, MemoryImage
+    from app.models import AgentKnowledgeProfile, ChatMessage, Memory, MemoryImage
 
     Base.metadata.create_all(bind=engine)
     print("Database tables created")

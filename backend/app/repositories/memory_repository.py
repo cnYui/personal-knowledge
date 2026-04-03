@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -40,3 +42,12 @@ class MemoryRepository:
     def delete(self, db: Session, memory: Memory) -> None:
         db.delete(memory)
         db.commit()
+
+    def list_recent_graph_added(self, db: Session, *, limit: int = 50) -> list[Memory]:
+        query = (
+            select(Memory)
+            .where(Memory.graph_status == 'added')
+            .order_by(Memory.graph_added_at.desc(), Memory.updated_at.desc(), Memory.created_at.desc())
+            .limit(limit)
+        )
+        return list(db.scalars(query))

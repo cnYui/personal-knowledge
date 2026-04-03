@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import AsyncMock
 
 from app.schemas.agent import GraphRetrievalResult
 from app.schemas.chat import ChatReference
@@ -57,7 +58,9 @@ async def test_agent_node_can_answer_greeting_without_retrieval():
         spec,
         graph_retrieval_tool=FailingGraphRetrievalTool(),
         llm_client=client,
+        knowledge_profile_service=type('ProfileService', (), {'compose_system_prompt': staticmethod(lambda base: f'{base}\n\n[overlay]')})(),
     )
+    node._extract_focus_points = AsyncMock(return_value='你好')
     context = RuntimeContext(query='你好')
     canvas = Canvas(WorkflowDSL(entry_node_id='agent', nodes=[spec]), context=context)
 
@@ -69,6 +72,9 @@ async def test_agent_node_can_answer_greeting_without_retrieval():
     assert result['agent_trace'].final_action == 'direct_general_answer'
     assert result['agent_trace'].steps[0].step_type == 'answer'
     assert result['agent_trace'].steps[0].action == 'answer_directly'
+    first_call = client.chat.completions.calls[0]
+    assert first_call['messages'][0]['role'] == 'system'
+    assert '[overlay]' in first_call['messages'][0]['content']
 
 
 @pytest.mark.asyncio
@@ -107,6 +113,7 @@ async def test_agent_node_uses_tool_loop_and_reference_store_for_grounded_answer
         graph_retrieval_tool=StubGraphRetrievalTool(),
         tool_loop_engine=engine,
     )
+    node._extract_focus_points = AsyncMock(return_value='Alice / 喜欢 / 绿茶')
     context = RuntimeContext(query='Alice 喜欢什么？')
     canvas = Canvas(WorkflowDSL(entry_node_id='agent', nodes=[spec]), context=context)
 
@@ -157,6 +164,7 @@ async def test_agent_node_prefixes_general_fallback_when_evidence_is_insufficien
         graph_retrieval_tool=StubGraphRetrievalTool(),
         tool_loop_engine=engine,
     )
+    node._extract_focus_points = AsyncMock(return_value='Alice / 近况')
     context = RuntimeContext(query='Alice 最近怎么样？')
     canvas = Canvas(WorkflowDSL(entry_node_id='agent', nodes=[spec]), context=context)
 
@@ -218,6 +226,7 @@ async def test_agent_node_can_call_retrieval_tool_multiple_rounds():
         graph_retrieval_tool=StubGraphRetrievalTool(),
         tool_loop_engine=engine,
     )
+    node._extract_focus_points = AsyncMock(return_value='星期一 / 星期五 / 垃圾收集')
     context = RuntimeContext(query='星期一和星期五分别收集什么垃圾？')
     canvas = Canvas(WorkflowDSL(entry_node_id='agent', nodes=[spec]), context=context)
 
@@ -280,6 +289,7 @@ async def test_agent_node_can_still_ground_answer_after_max_rounds_with_evidence
         knowledge_graph_service=StubKnowledgeGraphService(),
         tool_loop_engine=engine,
     )
+    node._extract_focus_points = AsyncMock(return_value='向量空间 / 定义')
     context = RuntimeContext(query='什么是向量空间？')
     canvas = Canvas(WorkflowDSL(entry_node_id='agent', nodes=[spec]), context=context)
 
