@@ -1,7 +1,6 @@
 import json
 import logging
 from typing import Any
-from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
@@ -10,9 +9,6 @@ from app.repositories.chat_repository import ChatRepository
 from app.schemas.chat import ChatReference, ChatResponse
 from app.workflow.canvas_factory import CanvasFactory
 from app.workflow.engine.citation_postprocessor import CitationPostProcessor, CitationResult
-
-if TYPE_CHECKING:
-    from app.services.agent_service import AgentService
 
 logger = logging.getLogger(__name__)
 
@@ -23,17 +19,10 @@ class ChatService:
         repository: ChatRepository | None = None,
         canvas_factory: CanvasFactory | None = None,
         citation_postprocessor: CitationPostProcessor | None = None,
-        agent_service: 'AgentService | None' = None,
     ) -> None:
         self.repository = repository or ChatRepository()
-        self.canvas_factory = canvas_factory
+        self.canvas_factory = canvas_factory or CanvasFactory()
         self.citation_postprocessor = citation_postprocessor or CitationPostProcessor()
-        self.agent_service = agent_service
-        if self.canvas_factory is None and self.agent_service is None:
-            self.canvas_factory = CanvasFactory()
-
-    def _use_legacy_agent_service(self) -> bool:
-        return self.canvas_factory is None and self.agent_service is not None
 
     def _collect_references(
         self,
@@ -213,10 +202,7 @@ class ChatService:
     async def send_message(self, db: Session, message: str) -> ChatResponse:
         """Send message and save to database"""
         self.repository.create(db, "user", message)
-        if self._use_legacy_agent_service():
-            result = await self.agent_service.ask(message)
-        else:
-            result = await self._run_chat_canvas(message)
+        result = await self._run_chat_canvas(message)
         self.repository.create(db, "assistant", str(result["answer"]))
         return ChatResponse(
             answer=str(result["answer"]),
@@ -226,10 +212,7 @@ class ChatService:
 
     async def rag_query(self, message: str) -> ChatResponse:
         """RAG query without saving to database (for localStorage-based chat)"""
-        if self._use_legacy_agent_service():
-            result = await self.agent_service.ask(message)
-        else:
-            result = await self._run_chat_canvas(message)
+        result = await self._run_chat_canvas(message)
         return ChatResponse(
             answer=str(result["answer"]),
             references=list(result["references"]),
@@ -239,11 +222,6 @@ class ChatService:
     async def rag_stream(self, message: str):
         """Streaming RAG query for real-time chat experience"""
         try:
-            if self._use_legacy_agent_service():
-                async for chunk in self.agent_service.ask_stream(message):
-                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                return
-
             canvas = self.canvas_factory.create_chat_canvas(query=message, group_id='default')
             agent_output: dict[str, Any] | None = None
             message_output: dict[str, Any] | None = None

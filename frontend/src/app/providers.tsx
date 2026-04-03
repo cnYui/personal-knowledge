@@ -94,6 +94,7 @@ export function AppProviders({ children }: PropsWithChildren) {
               borderRadius: 999,
               paddingInline: 20,
               paddingBlock: 10,
+              lineHeight: 1,
             },
             contained: {
               backgroundColor: '#141413',
@@ -105,12 +106,18 @@ export function AppProviders({ children }: PropsWithChildren) {
               },
             },
             outlined: {
-              borderColor: 'rgba(176, 174, 165, 0.45)',
-              color: '#141413',
-              backgroundColor: 'rgba(255, 253, 248, 0.72)',
+              borderColor: 'rgba(217, 119, 87, 0.34)',
+              color: '#8d573d',
+              backgroundColor: 'rgba(217, 119, 87, 0.045)',
               '&:hover': {
-                borderColor: 'rgba(20, 20, 19, 0.32)',
-                backgroundColor: 'rgba(232, 230, 220, 0.4)',
+                borderColor: 'rgba(217, 119, 87, 0.5)',
+                backgroundColor: 'rgba(217, 119, 87, 0.1)',
+              },
+            },
+            text: {
+              color: '#8d573d',
+              '&:hover': {
+                backgroundColor: 'rgba(217, 119, 87, 0.08)',
               },
             },
           },

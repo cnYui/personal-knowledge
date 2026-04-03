@@ -28,7 +28,7 @@ This backend integrates [Graphiti](https://github.com/getzep/graphiti), a tempor
 └──────┬──────┘   └─────┬──────────┘
        │                 │
 ┌──────▼──────┐   ┌─────▼──────────┐
-│  SQLite DB  │   │ Graphiti Client│
+│ PostgreSQL  │   │ Graphiti Client│
 │  (Memories) │   └─────┬──────────┘
 └─────────────┘         │
                   ┌─────▼──────────┐
@@ -39,7 +39,7 @@ This backend integrates [Graphiti](https://github.com/getzep/graphiti), a tempor
 
 **Flow:**
 1. User creates a memory via POST `/api/memories`
-2. Memory stored in SQLite with `graph_status='not_added'`
+2. Memory stored in PostgreSQL with `graph_status='not_added'`
 3. User triggers ingestion via POST `/api/memories/{id}/add-to-graph`
 4. Status updates to `pending`, memory ID queued to background worker
 5. Worker processes queue, calls Graphiti SDK to create episode
@@ -72,7 +72,7 @@ Edit `.env` with your settings:
 
 ```env
 # Database
-DATABASE_URL=sqlite:///./app.db
+DATABASE_URL=postgresql+psycopg://pkb_user:pkb_password@localhost:5432/personal_knowledge_base
 
 # Neo4j Configuration
 NEO4J_URI=bolt://localhost:7687

@@ -1,13 +1,12 @@
 """
 Clear all data from the database.
 
-This script will delete all memories and related data from both SQLite and Neo4j.
+This script will delete all memories and related data from the relational database and Neo4j.
 """
 
 import asyncio
-from sqlalchemy import text
 
-from app.core.database import SessionLocal, engine
+from app.core.database import SessionLocal
 from app.models.memory import Memory, MemoryImage
 from app.services.graphiti_client import GraphitiClient
 
@@ -32,9 +31,9 @@ async def clear_neo4j():
         print('   (This is OK if Neo4j is not running)')
 
 
-def clear_sqlite():
-    """Clear all data from SQLite database."""
-    print('\n🗑️  Clearing SQLite database...')
+def clear_relational_database():
+    """Clear all data from the relational database."""
+    print('\n🗑️  Clearing relational database...')
     db = SessionLocal()
     try:
         # Delete all memory images first (foreign key constraint)
@@ -46,26 +45,13 @@ def clear_sqlite():
         print(f'   Deleted {deleted_memories} memories')
 
         db.commit()
-        print('✅ SQLite cleared successfully')
+        print('✅ Relational database cleared successfully')
     except Exception as e:
         db.rollback()
-        print(f'❌ Failed to clear SQLite: {e}')
+        print(f'❌ Failed to clear relational database: {e}')
         raise
     finally:
         db.close()
-
-
-def reset_autoincrement():
-    """Reset SQLite autoincrement counters."""
-    print('\n🔄 Resetting autoincrement counters...')
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("DELETE FROM sqlite_sequence WHERE name='memory'"))
-            conn.execute(text("DELETE FROM sqlite_sequence WHERE name='memory_image'"))
-            conn.commit()
-        print('✅ Autoincrement counters reset')
-    except Exception as e:
-        print(f'⚠️  Failed to reset counters: {e}')
 
 
 async def main():
@@ -83,11 +69,8 @@ async def main():
         print('\n❌ Operation cancelled')
         return
 
-    # Clear SQLite
-    clear_sqlite()
-
-    # Reset autoincrement
-    reset_autoincrement()
+    # Clear relational database
+    clear_relational_database()
 
     # Clear Neo4j
     await clear_neo4j()
