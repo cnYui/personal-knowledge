@@ -40,14 +40,28 @@ class TitleGenerator:
             return
 
         if not config.api_key:
+            logger.error(
+                'TitleGenerator client initialization failed: missing dialog API key for provider=%s',
+                config.provider,
+            )
             raise missing_api_key_error(provider=config.provider, purpose='对话模型')
 
-        self.client = AsyncOpenAI(
-            api_key=config.api_key,
-            base_url=config.base_url,
+        logger.info(
+            'Refreshing TitleGenerator client: provider=%s, model=%s, base_url=%s',
+            config.provider,
+            config.model,
+            config.base_url,
         )
-        self.model = config.model
-        self._runtime_signature = signature
+        try:
+            self.client = AsyncOpenAI(
+                api_key=config.api_key,
+                base_url=config.base_url,
+            )
+            self.model = config.model
+            self._runtime_signature = signature
+        except Exception as error:
+            logger.error('TitleGenerator client initialization failed: %s', error, exc_info=True)
+            raise
 
     async def generate_title(self, content: str) -> Optional[str]:
         """

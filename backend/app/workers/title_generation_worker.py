@@ -31,6 +31,7 @@ class TitleGenerationWorker:
             logger.warning('Title generation worker already running')
             return
 
+        logger.info('Starting title generation worker: queue_size=%s', self.queue.qsize())
         self.running = True
         self.task = asyncio.create_task(self._process_queue())
         logger.info('Title generation worker started')
@@ -40,6 +41,7 @@ class TitleGenerationWorker:
         if not self.running:
             return
 
+        logger.info('Stopping title generation worker: queue_size=%s', self.queue.qsize())
         self.running = False
         if self.task:
             self.task.cancel()
@@ -61,6 +63,7 @@ class TitleGenerationWorker:
 
     async def _process_queue(self):
         """Process the title generation queue."""
+        logger.info('Title generation worker loop entered.')
         while self.running:
             try:
                 # Wait for a memory ID with timeout
@@ -74,8 +77,9 @@ class TitleGenerationWorker:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f'Error in title generation worker: {e}')
+                logger.error(f'Error in title generation worker: {e}', exc_info=True)
                 await asyncio.sleep(1)
+        logger.info('Title generation worker loop exited.')
 
     async def _process_memory(self, memory_id: str):
         """
@@ -115,7 +119,7 @@ class TitleGenerationWorker:
                 logger.error(f'Failed to generate title for memory {memory_id}')
 
         except Exception as e:
-            logger.error(f'Failed to process memory {memory_id}: {e}')
+            logger.error(f'Failed to process memory {memory_id}: {e}', exc_info=True)
             # Mark as failed
             try:
                 memory = db.query(Memory).filter(Memory.id == memory_id).first()

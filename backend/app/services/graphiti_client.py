@@ -51,38 +51,54 @@ class GraphitiClient:
             await self.client.close()
 
         if not runtime_config.api_key:
+            logger.error(
+                'GraphitiClient runtime initialization failed: missing knowledge-build API key for provider=%s',
+                runtime_config.provider,
+            )
             raise missing_api_key_error(provider=runtime_config.provider, purpose='知识库构建模型')
 
-        llm_config = LLMConfig(
-            api_key=runtime_config.api_key,
-            base_url=runtime_config.base_url,
-            model=runtime_config.model,
-            small_model=runtime_config.model,
-            max_tokens=2048,
-        )
-        llm_client = StepFunLLMClient(config=llm_config)
-        reranker_config = LLMConfig(
-            api_key=runtime_config.api_key,
-            base_url=runtime_config.base_url,
-            model=runtime_config.model,
-        )
-        cross_encoder = OpenAIRerankerClient(config=reranker_config)
-
-        self.client = Graphiti(
-            uri=settings.neo4j_uri,
-            user=settings.neo4j_user,
-            password=settings.neo4j_password,
-            llm_client=llm_client,
-            embedder=self.embedder,
-            cross_encoder=cross_encoder,
-        )
-        self._runtime_signature = signature
         logger.info(
-            'GraphitiClient runtime refreshed with provider=%s, model=%s, base_url=%s',
+            'Refreshing GraphitiClient runtime: provider=%s, model=%s, base_url=%s, neo4j_uri=%s, neo4j_user=%s',
             runtime_config.provider,
             runtime_config.model,
             runtime_config.base_url,
+            settings.neo4j_uri,
+            settings.neo4j_user,
         )
+        try:
+            llm_config = LLMConfig(
+                api_key=runtime_config.api_key,
+                base_url=runtime_config.base_url,
+                model=runtime_config.model,
+                small_model=runtime_config.model,
+                max_tokens=2048,
+            )
+            llm_client = StepFunLLMClient(config=llm_config)
+            reranker_config = LLMConfig(
+                api_key=runtime_config.api_key,
+                base_url=runtime_config.base_url,
+                model=runtime_config.model,
+            )
+            cross_encoder = OpenAIRerankerClient(config=reranker_config)
+
+            self.client = Graphiti(
+                uri=settings.neo4j_uri,
+                user=settings.neo4j_user,
+                password=settings.neo4j_password,
+                llm_client=llm_client,
+                embedder=self.embedder,
+                cross_encoder=cross_encoder,
+            )
+            self._runtime_signature = signature
+            logger.info(
+                'GraphitiClient runtime refreshed with provider=%s, model=%s, base_url=%s',
+                runtime_config.provider,
+                runtime_config.model,
+                runtime_config.base_url,
+            )
+        except Exception as error:
+            logger.error('GraphitiClient runtime initialization failed: %s', error, exc_info=True)
+            raise
 
     async def add_memory_episode(
         self,

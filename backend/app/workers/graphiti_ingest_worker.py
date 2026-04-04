@@ -39,7 +39,8 @@ class GraphitiIngestWorker:
         if self.running:
             logger.warning('Worker already running')
             return
-        
+
+        logger.info('Starting GraphitiIngestWorker: queue_size=%s', self.queue.qsize())
         self.running = True
         self._task = asyncio.create_task(self._worker_loop())
         logger.info('GraphitiIngestWorker started')
@@ -48,7 +49,8 @@ class GraphitiIngestWorker:
         """Stop the worker gracefully."""
         if not self.running:
             return
-        
+
+        logger.info('Stopping GraphitiIngestWorker: queue_size=%s', self.queue.qsize())
         self.running = False
         if self._task:
             await self._task
@@ -62,6 +64,7 @@ class GraphitiIngestWorker:
 
     async def _worker_loop(self):
         """Main worker loop that processes queue items."""
+        logger.info('GraphitiIngestWorker loop entered.')
         while self.running:
             try:
                 memory_id = await asyncio.wait_for(self.queue.get(), timeout=1.0)
@@ -71,6 +74,7 @@ class GraphitiIngestWorker:
                 continue
             except Exception as e:
                 logger.error(f'Error in worker loop: {e}', exc_info=True)
+        logger.info('GraphitiIngestWorker loop exited.')
 
     async def _process_memory(self, memory_id: str):
         """Process a single memory by adding it to the knowledge graph."""
@@ -95,6 +99,7 @@ class GraphitiIngestWorker:
             db.commit()
 
             logger.info('知识图谱构建完成: memory_id=%s, episode_uuid=%s', memory_id, episode_uuid)
+            logger.info('Requesting knowledge profile refresh after graph ingest success: memory_id=%s', memory_id)
             self.profile_refresh_scheduler.request_refresh(reason='graph_ingest_success')
 
         except Exception as e:
