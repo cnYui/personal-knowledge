@@ -90,15 +90,32 @@ class GraphitiIngestWorker:
             memory.graph_error = None
             db.commit()
 
-            episode_uuid = await self._add_memory_episode_with_retry(db, memory)
+            episode_uuids = await self.graphiti_client.add_memory_in_chunks(
+                memory_id=memory.id,
+                title=memory.title,
+                content=memory.content,
+                group_id=memory.group_id,
+                created_at=memory.created_at,
+                episode_adder=lambda chunk_title, chunk_content: self._add_memory_episode_with_retry(
+                    db=db,
+                    memory=memory,
+                    title=chunk_title,
+                    content=chunk_content,
+                ),
+            )
 
             memory.graph_status = 'added'
-            memory.graph_episode_uuid = episode_uuid
+            memory.graph_episode_uuid = episode_uuids[0] if episode_uuids else None
             memory.graph_added_at = datetime.now()
             memory.graph_error = None
             db.commit()
 
-            logger.info('知识图谱构建完成: memory_id=%s, episode_uuid=%s', memory_id, episode_uuid)
+            logger.info(
+                '知识图谱构建完成: memory_id=%s, episode_count=%s, first_episode_uuid=%s',
+                memory_id,
+                len(episode_uuids),
+                memory.graph_episode_uuid,
+            )
             logger.info('Requesting knowledge profile refresh after graph ingest success: memory_id=%s', memory_id)
             self.profile_refresh_scheduler.request_refresh(reason='graph_ingest_success')
 
@@ -115,8 +132,8 @@ class GraphitiIngestWorker:
         finally:
             db.close()
 
-    async def _add_memory_episode_with_retry(self, db, memory):
-        """Add memory episode with retry/backoff for rate limit errors."""
+    async def _add_memory_episode_with_retry(self, db, memory, title: str, content: str):
+        """Add one memory chunk episode with retry/backoff for rate limit errors."""
         last_error = None
 
         for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
@@ -124,8 +141,8 @@ class GraphitiIngestWorker:
                 return await asyncio.wait_for(
                     self.graphiti_client.add_memory_episode(
                         memory_id=memory.id,
-                        title=memory.title,
-                        content=memory.content,
+                        title=title,
+                        content=content,
                         group_id=memory.group_id,
                         created_at=memory.created_at,
                     ),

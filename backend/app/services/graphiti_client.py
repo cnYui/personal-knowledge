@@ -2,6 +2,7 @@ import logging
 import re
 from datetime import datetime
 from difflib import SequenceMatcher
+from typing import Awaitable, Callable
 
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodeType
@@ -15,6 +16,16 @@ from app.services.local_embedder import LocalEmbedder, LocalEmbedderConfig
 from app.services.stepfun_llm_client import StepFunLLMClient
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_LONG_MEMORY_THRESHOLD = 2500
+DEFAULT_TARGET_CHUNK_LENGTH = 2000
+DEFAULT_MAX_CHUNK_LENGTH = 2500
+DEFAULT_MAX_CHUNK_COUNT = 8
+SENTENCE_SPLIT_PATTERN = re.compile(r'(?<=[。！？!?；;])')
+
+
+class GraphIngestChunkLimitError(ValueError):
+    """Raised when a memory exceeds the allowed number of graph ingestion chunks."""
 
 
 class GraphitiClient:
@@ -34,6 +45,10 @@ class GraphitiClient:
         self.client: Graphiti | None = None
         self._runtime_signature: tuple[str, str, str, int] | None = None
         self.relation_dedup_threshold = min(max(settings.graph_relation_dedup_threshold, 0.0), 1.0)
+        self.long_memory_threshold = DEFAULT_LONG_MEMORY_THRESHOLD
+        self.target_chunk_length = DEFAULT_TARGET_CHUNK_LENGTH
+        self.max_chunk_length = DEFAULT_MAX_CHUNK_LENGTH
+        self.max_chunk_count = DEFAULT_MAX_CHUNK_COUNT
         logger.info('GraphitiClient initialized')
 
     async def _ensure_runtime_client(self) -> None:
@@ -147,6 +162,52 @@ class GraphitiClient:
 
         return episode_uuid
 
+    def split_memory_content(self, content: str) -> list[str]:
+        normalized_content = (content or '').strip()
+        if not normalized_content:
+            return []
+
+        if len(normalized_content) < self.long_memory_threshold:
+            return [normalized_content]
+
+        chunks = self._chunk_by_paragraphs(normalized_content)
+        if len(chunks) > self.max_chunk_count:
+            raise GraphIngestChunkLimitError('Graph build rejected: 文章过长，已超过自动分段上限，请先拆分后再入图。')
+        return chunks
+
+    async def add_memory_in_chunks(
+        self,
+        memory_id: str,
+        title: str,
+        content: str,
+        group_id: str,
+        created_at: datetime,
+        episode_adder: Callable[[str, str], Awaitable[str]] | None = None,
+    ) -> list[str]:
+        chunks = self.split_memory_content(content)
+        if not chunks:
+            return []
+
+        async def _default_episode_adder(chunk_title: str, chunk_content: str) -> str:
+            return await self.add_memory_episode(
+                memory_id=memory_id,
+                title=chunk_title,
+                content=chunk_content,
+                group_id=group_id,
+                created_at=created_at,
+            )
+
+        add_episode_for_chunk = episode_adder or _default_episode_adder
+        episode_uuids: list[str] = []
+        total = len(chunks)
+
+        for index, chunk in enumerate(chunks, start=1):
+            chunk_title = title if total == 1 else f'{title} ({index}/{total})'
+            episode_uuid = await add_episode_for_chunk(chunk_title, chunk)
+            episode_uuids.append(episode_uuid)
+
+        return episode_uuids
+
     async def search(self, query: str, group_id: str = 'default', limit: int = 5):
         """
         Search the knowledge graph for relevant information.
@@ -236,6 +297,81 @@ class GraphitiClient:
             deduped_edges.append(edge)
 
         return deduped_edges
+
+    def _chunk_by_paragraphs(self, content: str) -> list[str]:
+        paragraphs = [paragraph.strip() for paragraph in re.split(r'\n\s*\n+', content) if paragraph.strip()]
+        if not paragraphs:
+            return self._force_split(content)
+
+        chunks: list[str] = []
+        current_parts: list[str] = []
+        current_length = 0
+
+        for paragraph in paragraphs:
+            paragraph_chunks = self._split_large_paragraph(paragraph)
+            for paragraph_chunk in paragraph_chunks:
+                candidate_separator = '\n\n' if current_parts else ''
+                candidate_length = current_length + len(candidate_separator) + len(paragraph_chunk)
+                if current_parts and candidate_length > self.max_chunk_length:
+                    chunks.append('\n\n'.join(current_parts).strip())
+                    current_parts = [paragraph_chunk]
+                    current_length = len(paragraph_chunk)
+                    continue
+
+                current_parts.append(paragraph_chunk)
+                current_length = candidate_length
+
+                if current_length >= self.target_chunk_length:
+                    chunks.append('\n\n'.join(current_parts).strip())
+                    current_parts = []
+                    current_length = 0
+
+        if current_parts:
+            chunks.append('\n\n'.join(current_parts).strip())
+
+        return [chunk for chunk in chunks if chunk]
+
+    def _split_large_paragraph(self, paragraph: str) -> list[str]:
+        if len(paragraph) <= self.max_chunk_length:
+            return [paragraph]
+
+        sentences = [sentence.strip() for sentence in SENTENCE_SPLIT_PATTERN.split(paragraph) if sentence.strip()]
+        if len(sentences) <= 1:
+            return self._force_split(paragraph)
+
+        chunks: list[str] = []
+        current = ''
+
+        for sentence in sentences:
+            candidate = f'{current}{sentence}' if current else sentence
+            if current and len(candidate) > self.max_chunk_length:
+                chunks.append(current.strip())
+                current = sentence
+                if len(current) > self.max_chunk_length:
+                    chunks.extend(self._force_split(current))
+                    current = ''
+                continue
+
+            current = candidate
+
+            if len(current) >= self.target_chunk_length:
+                chunks.append(current.strip())
+                current = ''
+
+        if current:
+            if len(current) > self.max_chunk_length:
+                chunks.extend(self._force_split(current))
+            else:
+                chunks.append(current.strip())
+
+        return [chunk for chunk in chunks if chunk]
+
+    def _force_split(self, text: str) -> list[str]:
+        return [
+            text[start:start + self.max_chunk_length].strip()
+            for start in range(0, len(text), self.max_chunk_length)
+            if text[start:start + self.max_chunk_length].strip()
+        ]
 
     async def close(self):
         """Close the Graphiti client connection."""
