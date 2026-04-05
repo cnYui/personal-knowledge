@@ -18,6 +18,10 @@ const PAGE_META: Record<string, { title: string; description: string }> = {
     title: '知识图谱',
     description: '查看记忆之间的关联结构，理解实体、关系和上下文在图谱中的连接方式。',
   },
+  '/daily-review': {
+    title: '每日回顾',
+    description: '今天推荐你回顾哪些旧内容、最近沉淀了哪些主题，以及哪些知识已经进入图谱。',
+  },
   '/settings': {
     title: '设置',
     description: '统一管理对话模型与知识库构建模型的 API Key。保存后会写回 .env，并立即热更新当前后端服务。',

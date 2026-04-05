@@ -144,7 +144,7 @@ async def test_add_memory_episode_with_retry_uses_chunk_title_and_content(mock_g
         content='分段内容',
     )
 
-    assert episode_uuid == 'episode-uuid-456'
+    assert episode_uuid == ['episode-uuid-456']
     mock_client_instance.add_memory_episode.assert_awaited_once_with(
         memory_id='memory-1',
         title='标题 (1/2)',
@@ -152,3 +152,71 @@ async def test_add_memory_episode_with_retry_uses_chunk_title_and_content(mock_g
         group_id='default',
         created_at=memory.created_at,
     )
+
+
+@pytest.mark.anyio
+@patch('app.workers.graphiti_ingest_worker.GraphitiClient')
+async def test_add_memory_episode_with_retry_retries_same_chunk_before_succeeding(mock_graphiti_client):
+    mock_client_instance = Mock()
+    mock_client_instance.add_memory_episode = AsyncMock(
+        side_effect=[Exception('temporary-1'), Exception('temporary-2'), 'episode-uuid-789']
+    )
+    mock_graphiti_client.return_value = mock_client_instance
+
+    worker = GraphitiIngestWorker()
+    memory = Mock()
+    memory.id = 'memory-2'
+    memory.group_id = 'default'
+    memory.created_at = Mock()
+    memory.graph_error = None
+    db = Mock()
+
+    episode_uuids = await worker._add_memory_episode_with_retry(
+        db=db,
+        memory=memory,
+        title='重试标题',
+        content='需要重试的内容',
+    )
+
+    assert episode_uuids == ['episode-uuid-789']
+    assert mock_client_instance.add_memory_episode.await_count == 3
+
+
+@pytest.mark.anyio
+@patch('app.workers.graphiti_ingest_worker.GraphitiClient')
+async def test_add_memory_episode_with_retry_bisects_chunk_after_retries_are_exhausted(mock_graphiti_client):
+    mock_client_instance = Mock()
+    mock_client_instance.add_memory_episode = AsyncMock(
+        side_effect=[
+            Exception('chunk-failure-1'),
+            Exception('chunk-failure-2'),
+            Exception('chunk-failure-3'),
+            Exception('chunk-failure-4'),
+            'episode-uuid-left',
+            'episode-uuid-right',
+        ]
+    )
+    mock_graphiti_client.return_value = mock_client_instance
+
+    worker = GraphitiIngestWorker()
+    memory = Mock()
+    memory.id = 'memory-3'
+    memory.group_id = 'default'
+    memory.created_at = Mock()
+    memory.graph_error = None
+    db = Mock()
+    content = '甲' * 900 + '。' + '乙' * 900
+
+    episode_uuids = await worker._add_memory_episode_with_retry(
+        db=db,
+        memory=memory,
+        title='二分标题',
+        content=content,
+    )
+
+    assert episode_uuids == ['episode-uuid-left', 'episode-uuid-right']
+    assert mock_client_instance.add_memory_episode.await_count == 6
+    attempted_titles = [call.kwargs['title'] for call in mock_client_instance.add_memory_episode.await_args_list]
+    assert attempted_titles[:4] == ['二分标题', '二分标题', '二分标题', '二分标题']
+    assert attempted_titles[4] == '二分标题 [1/2]'
+    assert attempted_titles[5] == '二分标题 [2/2]'

@@ -61,8 +61,8 @@ def test_split_memory_content_returns_single_chunk_for_short_text():
 
 def test_split_memory_content_splits_long_text_into_multiple_chunks():
     client = GraphitiClient()
-    paragraph = '这是一段用于图谱构建的长文本。' * 180
-    content = '\n\n'.join([paragraph, paragraph, paragraph])
+    paragraph = '这是一段用于图谱构建的长文本。' * 100
+    content = '\n\n'.join([paragraph, paragraph])
 
     chunks = client.split_memory_content(content)
 

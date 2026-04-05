@@ -1,6 +1,6 @@
 import { Box, Paper, Stack, Tooltip, Typography } from '@mui/material'
 
-import { ChatMessage, ChatReference } from '../../types/chat'
+import { ChatMessage, ChatReference, SentenceCitation } from '../../types/chat'
 import { MarkdownContent } from './MarkdownContent'
 import { ThinkingProcess } from './ThinkingProcess'
 
@@ -19,41 +19,46 @@ function splitIntoSentences(content: string) {
     .filter(Boolean)
 }
 
-function buildSentenceReferenceMap(sentences: string[], references: ChatReference[]) {
-  const map = new Map<number, ChatReference[]>()
+function CitationList({ references, citationSection }: { references: ChatReference[]; citationSection?: string[] }) {
+  const items = citationSection?.length ? citationSection : references.map((reference) => getReferenceText(reference))
+  if (!items.length) return null
 
-  references.forEach((reference, index) => {
-    const sentenceIndex = sentences.length === 0 ? 0 : Math.min(index, sentences.length - 1)
-    const existing = map.get(sentenceIndex) ?? []
-    existing.push(reference)
-    map.set(sentenceIndex, existing)
-  })
-
-  return map
-}
-
-function CitationList({ references }: { references: ChatReference[] }) {
   return (
     <Stack spacing={0.65} sx={{ mt: 1.75 }}>
-      {references.map((reference, index) => (
+      <Typography
+        variant="caption"
+        sx={{
+          display: 'block',
+          color: 'text.secondary',
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          fontFamily: 'Poppins, Arial, sans-serif',
+        }}
+      >
+        参考引用
+      </Typography>
+      {items.map((item, index) => (
         <Typography
-          key={`${reference.type}-${index}`}
+          key={`${item}-${index}`}
           variant="caption"
           color="text.secondary"
           sx={{ display: 'block', fontFamily: 'Poppins, Arial, sans-serif' }}
         >
-          [{index + 1}] {getReferenceText(reference)}
+          [{index + 1}] {item}
         </Typography>
       ))}
     </Stack>
   )
 }
 
-function CitationInline({ references }: { references: ChatReference[] }) {
+function CitationInline({ citationIndexes, references }: { citationIndexes: number[]; references: ChatReference[] }) {
   return (
     <Box component="span" sx={{ ml: 0.5, display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap' }}>
-      {references.map((reference, index) => (
-        <Tooltip key={`${reference.type}-${index}`} title={getReferenceText(reference)} arrow placement="top">
+      {citationIndexes.map((citationIndex) => {
+        const reference = references[citationIndex - 1]
+        if (!reference) return null
+        return (
+        <Tooltip key={`${citationIndex}-${reference.type}`} title={getReferenceText(reference)} arrow placement="top">
           <Box
             component="sup"
             sx={{
@@ -65,16 +70,44 @@ function CitationInline({ references }: { references: ChatReference[] }) {
               lineHeight: 1,
             }}
           >
-            [{index + 1}]
+            [{citationIndex}]
           </Box>
         </Tooltip>
-      ))}
+      )})}
     </Box>
   )
 }
 
-function AssistantContent({ content, references }: { content: string; references: ChatReference[] }) {
-  const shouldUseSentenceMode = references.length > 0 && !looksLikeMarkdown(content)
+function renderSentenceWithCitationMarkers(sentence: string, citationIndexes: number[], references: ChatReference[]) {
+  const trimmed = sentence.trim()
+  if (!citationIndexes.length) {
+    return <>{sentence}</>
+  }
+
+  const match = trimmed.match(/^(.*?)([。！？!?；;：:]*)$/)
+  const body = match?.[1] ?? trimmed
+  const punctuation = match?.[2] ?? ''
+  return (
+    <>
+      {body}
+      <CitationInline citationIndexes={citationIndexes} references={references} />
+      {punctuation}
+    </>
+  )
+}
+
+function AssistantContent({
+  content,
+  references,
+  sentenceCitations,
+}: {
+  content: string
+  references: ChatReference[]
+  sentenceCitations?: SentenceCitation[]
+}) {
+  const hasStructuredSentenceCitations = Boolean(sentenceCitations?.length)
+  const shouldUseSentenceMode =
+    !looksLikeMarkdown(content) && (hasStructuredSentenceCitations || references.length > 0)
 
   if (!shouldUseSentenceMode) {
     return (
@@ -82,23 +115,27 @@ function AssistantContent({ content, references }: { content: string; references
         <Box sx={{ minWidth: 0, flex: 1 }}>
           <MarkdownContent content={content} />
         </Box>
-        {references.length ? <CitationInline references={references} /> : null}
       </Box>
     )
   }
 
   const sentences = splitIntoSentences(content)
-  const sentenceReferenceMap = buildSentenceReferenceMap(sentences, references)
+  const sentenceCitationMap = new Map<number, number[]>()
+  for (const item of sentenceCitations ?? []) {
+    if (typeof item.sentence_index !== 'number' || !Array.isArray(item.citation_indexes)) {
+      continue
+    }
+    sentenceCitationMap.set(item.sentence_index, item.citation_indexes)
+  }
 
   return (
     <Stack spacing={1}>
       {sentences.map((sentence, index) => {
-        const sentenceReferences = sentenceReferenceMap.get(index) ?? []
+        const citationIndexes = sentenceCitationMap.get(index) ?? []
 
         return (
           <Typography key={`${sentence}-${index}`} sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
-            {sentence}
-            {sentenceReferences.length ? <CitationInline references={sentenceReferences} /> : null}
+            {renderSentenceWithCitationMarkers(sentence, citationIndexes, references)}
           </Typography>
         )
       })}
@@ -144,8 +181,14 @@ export function ChatMessageList({
               trace={message.agentTrace ?? null}
               active={Boolean(message.isStreaming)}
             />
-            <AssistantContent content={message.content} references={message.references ?? []} />
-            {message.references?.length ? <CitationList references={message.references} /> : null}
+            <AssistantContent
+              content={message.content}
+              references={message.references ?? []}
+              sentenceCitations={message.sentenceCitations}
+            />
+            {message.references?.length || message.citationSection?.length ? (
+              <CitationList references={message.references ?? []} citationSection={message.citationSection} />
+            ) : null}
             {message.isStreaming ? (
               <Box component="span" sx={{ color: 'text.secondary' }}>
                 ▋

@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.repositories.memory_repository import MemoryRepository
-from app.schemas.memory import MemoryCreate, MemoryUpdate
+from app.schemas.memory import MemoryClipCreate, MemoryCreate, MemoryUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,26 @@ class MemoryService:
 
     def create_memory(self, db: Session, payload: MemoryCreate):
         return self.repository.create(db, payload)
+
+    def create_memory_clip(self, db: Session, payload: MemoryClipCreate):
+        logger.info(
+            "Creating memory clip payload: title=%s source_platform=%s source_type=%s content_length=%s",
+            payload.title,
+            payload.source_platform,
+            payload.source_type,
+            len(payload.content or ""),
+        )
+        memory_payload = MemoryCreate(
+            title=payload.title,
+            content=payload.content,
+            title_status='ready',
+            source_platform=payload.source_platform,
+            source_url=payload.source_url,
+            source_type=payload.source_type,
+        )
+        memory = self.repository.create(db, memory_payload)
+        logger.info("Created memory clip record: memory_id=%s title=%s", memory.id, memory.title)
+        return memory
 
     def list_memories(self, db: Session, keyword: str | None = None, group_id: str | None = None):
         return self.repository.list(db, keyword=keyword, group_id=group_id)

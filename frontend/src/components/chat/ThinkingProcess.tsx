@@ -133,6 +133,26 @@ function buildThinkingTimeline(timelineEvents: ChatTimelineEvent[], trace: Agent
     return timeline
   }
 
+  if (trace) {
+    const finalAction = trace.final_action || 'timeline_only'
+    let detail = 'Agent 已完成当前回答。'
+    if (finalAction === 'direct_general_answer') {
+      detail = '本轮问题无需检索，Agent 已直接生成回答。'
+    } else if (finalAction === 'kb_grounded_answer') {
+      detail = 'Agent 已基于当前证据生成最终回答。'
+    } else if (finalAction === 'kb_plus_general_answer') {
+      detail = '知识库证据不足，Agent 已补充通用模型回答。'
+    }
+    return [
+      {
+        key: 'completed-answer',
+        label: '组织最终回答',
+        detail,
+        status: 'done' as const,
+      },
+    ]
+  }
+
   if (active) {
     return [
       {

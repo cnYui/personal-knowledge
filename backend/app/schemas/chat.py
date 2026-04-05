@@ -17,9 +17,16 @@ class ChatReference(BaseModel):
     fact: str | None = None
 
 
+class SentenceCitation(BaseModel):
+    sentence_index: int
+    citation_indexes: list[int] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     answer: str
     references: list[ChatReference] = Field(default_factory=list)
+    citation_section: list[str] = Field(default_factory=list)
+    sentence_citations: list[SentenceCitation] = Field(default_factory=list)
     agent_trace: dict[str, Any] | None = None
 
 

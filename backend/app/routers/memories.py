@@ -1,19 +1,37 @@
+import logging
+
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import get_worker
 from app.schemas.graph import AddToGraphResponse, BatchAddToGraphRequest, BatchAddToGraphResponse, GraphStatusResponse
-from app.schemas.memory import MemoryCreate, MemoryRead, MemoryUpdate
+from app.schemas.memory import MemoryClipCreate, MemoryCreate, MemoryRead, MemoryUpdate
 from app.services.memory_service import MemoryService
 
 router = APIRouter(prefix="/api/memories", tags=["memories"])
 service = MemoryService()
+logger = logging.getLogger(__name__)
 
 
 @router.post("", response_model=MemoryRead, status_code=status.HTTP_201_CREATED)
 def create_memory(payload: MemoryCreate, db: Session = Depends(get_db)) -> MemoryRead:
     return service.create_memory(db, payload)
+
+
+@router.post("/clip", response_model=MemoryRead, status_code=status.HTTP_201_CREATED)
+def create_memory_clip(payload: MemoryClipCreate, db: Session = Depends(get_db)) -> MemoryRead:
+    logger.info(
+        "Received browser clip save request: title=%s source_platform=%s source_type=%s source_url=%s content_length=%s",
+        payload.title,
+        payload.source_platform,
+        payload.source_type,
+        payload.source_url,
+        len(payload.content or ""),
+    )
+    memory = service.create_memory_clip(db, payload)
+    logger.info("Browser clip saved successfully: memory_id=%s title=%s", memory.id, memory.title)
+    return memory
 
 
 @router.get("", response_model=list[MemoryRead])
@@ -23,22 +41,6 @@ def list_memories(
     db: Session = Depends(get_db),
 ) -> list[MemoryRead]:
     return service.list_memories(db, keyword=keyword, group_id=group_id)
-
-
-@router.get("/{memory_id}", response_model=MemoryRead)
-def get_memory(memory_id: str, db: Session = Depends(get_db)) -> MemoryRead:
-    return service.get_memory(db, memory_id)
-
-
-@router.put("/{memory_id}", response_model=MemoryRead)
-def update_memory(memory_id: str, payload: MemoryUpdate, db: Session = Depends(get_db)) -> MemoryRead:
-    return service.update_memory(db, memory_id, payload)
-
-
-@router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_memory(memory_id: str, db: Session = Depends(get_db)) -> Response:
-    service.delete_memory(db, memory_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post('/{memory_id}/add-to-graph', response_model=AddToGraphResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -85,3 +87,19 @@ def get_graph_status(memory_id: str, db: Session = Depends(get_db)) -> GraphStat
         graph_added_at=memory.graph_added_at.isoformat() if memory.graph_added_at else None,
         graph_error=memory.graph_error,
     )
+
+
+@router.get("/{memory_id}", response_model=MemoryRead)
+def get_memory(memory_id: str, db: Session = Depends(get_db)) -> MemoryRead:
+    return service.get_memory(db, memory_id)
+
+
+@router.put("/{memory_id}", response_model=MemoryRead)
+def update_memory(memory_id: str, payload: MemoryUpdate, db: Session = Depends(get_db)) -> MemoryRead:
+    return service.update_memory(db, memory_id, payload)
+
+
+@router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_memory(memory_id: str, db: Session = Depends(get_db)) -> Response:
+    service.delete_memory(db, memory_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

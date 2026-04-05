@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "个人知识库",
+  "version": "2.0.2",
+  "description": "个人知识库浏览器插件：支持 AI 对话快速导航与选中文本采集，可直接保存到个人知识库的记忆管理页面。",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*"
+  ],
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chat.openai.com/*",
+        "https://chatgpt.com/*",
+        "https://gemini.google.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://kimi.com/*",
+        "https://www.kimi.com/*",
+        "https://tongyi.aliyun.com/*",
+        "https://qianwen.aliyun.com/*",
+        "https://qianwen.com/*",
+        "https://www.qianwen.com/*",
+        "https://www.doubao.com/*",
+        "https://doubao.com/*"
+      ],
+      "js": [
+        "content/platforms.js",
+        "content/storage.js",
+        "content/capture.js",
+        "content/navigation.js",
+        "content/ui.js",
+        "content/main.js"
+      ],
+      "css": ["styles.css"]
+    }
+  ]
+}

@@ -151,6 +151,8 @@ export function useSendChatMessage() {
       content: '',
       created_at: new Date().toISOString(),
       references: [],
+      citationSection: [],
+      sentenceCitations: [],
       agentTrace: null,
       timeline: [],
       isStreaming: true,
@@ -171,6 +173,18 @@ export function useSendChatMessage() {
           updateAssistantDraft(assistantId, (draft) => ({
             ...draft,
             references: refs,
+          }))
+        },
+        (citationSection) => {
+          updateAssistantDraft(assistantId, (draft) => ({
+            ...draft,
+            citationSection,
+          }))
+        },
+        (sentenceCitations) => {
+          updateAssistantDraft(assistantId, (draft) => ({
+            ...draft,
+            sentenceCitations,
           }))
         },
         (timelineEvent) => {

@@ -19,6 +19,9 @@ const MemoryUploadPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import('../pages/SettingsPage').then((module) => ({ default: module.SettingsPage })),
 )
+const DailyReviewPage = lazy(() =>
+  import('../pages/DailyReviewPage').then((module) => ({ default: module.DailyReviewPage })),
+)
 
 function PageFallback() {
   return (
@@ -63,6 +66,14 @@ export const router = createBrowserRouter([
         element: (
           <Suspense fallback={<PageFallback />}>
             <KnowledgeGraphPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'daily-review',
+        element: (
+          <Suspense fallback={<PageFallback />}>
+            <DailyReviewPage />
           </Suspense>
         ),
       },

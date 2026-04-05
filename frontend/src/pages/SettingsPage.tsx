@@ -1,4 +1,5 @@
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
+import ExpandMoreOutlinedIcon from '@mui/icons-material/ExpandMoreOutlined'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import KeyOutlinedIcon from '@mui/icons-material/KeyOutlined'
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined'
@@ -6,6 +7,9 @@ import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined'
 import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined'
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -24,6 +28,20 @@ import { ErrorState } from '../components/common/ErrorState'
 import { LoadingState } from '../components/common/LoadingState'
 import { useModelConfig, useUpdateModelConfig } from '../hooks/useModelConfig'
 import { normalizeApiError } from '../services/apiClient'
+import { unifiedCardSx } from '../styles/cardStyles'
+import { AgentKnowledgeProfileStatus } from '../types/settings'
+
+const EMPTY_KNOWLEDGE_PROFILE: AgentKnowledgeProfileStatus = {
+  available: false,
+  status: 'missing',
+  major_topics: [],
+  high_frequency_entities: [],
+  high_frequency_relations: [],
+  recent_focuses: [],
+  rendered_overlay: '',
+  updated_at: null,
+  error_message: null,
+}
 
 interface ApiKeyCardProps {
   title: string
@@ -39,6 +57,18 @@ interface ApiKeyCardProps {
   onToggleEdit: () => void
   onToggleReveal: () => void
   onChange: (nextValue: string) => void
+}
+
+interface KnowledgeProfileSectionProps {
+  available: boolean
+  status: string
+  updatedAt: string | null
+  errorMessage: string | null
+  majorTopics: string[]
+  highFrequencyEntities: string[]
+  highFrequencyRelations: string[]
+  recentFocuses: string[]
+  renderedOverlay: string
 }
 
 function ApiKeyCard({
@@ -61,11 +91,8 @@ function ApiKeyCard({
   return (
     <Paper
       sx={{
+        ...unifiedCardSx,
         p: 3,
-        borderRadius: 0.9,
-        border: '1px solid rgba(176, 174, 165, 0.24)',
-        background: 'linear-gradient(180deg, rgba(255,253,248,0.98) 0%, rgba(245,241,232,0.94) 100%)',
-        boxShadow: '0 18px 40px rgba(20, 20, 19, 0.05)',
       }}
     >
       <Stack spacing={2}>
@@ -129,6 +156,108 @@ function ApiKeyCard({
   )
 }
 
+function ProfileGroup({ title, items }: { title: string; items: string[] }) {
+  return (
+    <Stack spacing={1.25}>
+      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+        {title}
+      </Typography>
+      {items.length ? (
+        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+          {items.map((item) => (
+            <Chip key={`${title}-${item}`} size="small" variant="outlined" label={item} />
+          ))}
+        </Stack>
+      ) : (
+        <Typography variant="body2" color="text.secondary">
+          暂无内容
+        </Typography>
+      )}
+    </Stack>
+  )
+}
+
+function KnowledgeProfileSection({
+  available,
+  status,
+  updatedAt,
+  errorMessage,
+  majorTopics,
+  highFrequencyEntities,
+  highFrequencyRelations,
+  recentFocuses,
+  renderedOverlay,
+}: KnowledgeProfileSectionProps) {
+  const statusLabel =
+    status === 'ready' ? '已就绪' : status === 'building' ? '生成中' : status === 'failed' ? '生成失败' : '未生成'
+  const statusColor = status === 'ready' ? 'success' : status === 'failed' ? 'error' : 'default'
+  const updatedLabel = updatedAt ? new Date(updatedAt).toLocaleString('zh-CN') : '暂无记录'
+
+  return (
+    <Paper
+      sx={{
+        ...unifiedCardSx,
+        p: 3,
+      }}
+    >
+      <Stack spacing={2.5}>
+        <Stack direction="row" justifyContent="space-between" spacing={2} alignItems="flex-start">
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 800 }}>
+              当前知识画像
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              当前 Agent 启动时会把这份自动生成的知识画像拼接到固定策略 prompt 后面，用于帮助判断知识库里大致有哪些内容。
+            </Typography>
+          </Box>
+          <Chip color={statusColor} label={statusLabel} sx={{ alignSelf: 'flex-start' }} />
+        </Stack>
+
+        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+          <Chip size="small" variant="outlined" label={`更新时间：${updatedLabel}`} />
+          <Chip size="small" variant="outlined" label={available ? '已接入 Agent 运行时' : '当前暂无可用画像'} />
+        </Stack>
+
+        {status === 'failed' && errorMessage ? <Alert severity="error">知识画像刷新失败：{errorMessage}</Alert> : null}
+
+        <ProfileGroup title="主要主题" items={majorTopics} />
+        <ProfileGroup title="高频实体" items={highFrequencyEntities} />
+        <ProfileGroup title="高频关系" items={highFrequencyRelations} />
+        <ProfileGroup title="最近新增知识重点" items={recentFocuses} />
+
+        <Accordion disableGutters elevation={0} sx={{ backgroundColor: 'transparent', '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+              查看 Agent Prompt Overlay
+            </Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <Box
+              sx={{
+                p: 2,
+                borderRadius: 0.75,
+                border: '1px solid rgba(176, 174, 165, 0.22)',
+                backgroundColor: 'rgba(250, 249, 245, 0.72)',
+              }}
+            >
+              <Typography
+                variant="body2"
+                sx={{
+                  whiteSpace: 'pre-wrap',
+                  color: 'text.secondary',
+                  lineHeight: 1.8,
+                }}
+              >
+                {renderedOverlay || '当前还没有可展示的 overlay 文本。'}
+              </Typography>
+            </Box>
+          </AccordionDetails>
+        </Accordion>
+      </Stack>
+    </Paper>
+  )
+}
+
 export function SettingsPage() {
   const { data, isLoading, isError } = useModelConfig()
   const updateMutation = useUpdateModelConfig()
@@ -173,6 +302,8 @@ export function SettingsPage() {
   if (isError || !data) {
     return <ErrorState message="模型设置加载失败" />
   }
+
+  const knowledgeProfile = data.knowledge_profile ?? EMPTY_KNOWLEDGE_PROFILE
 
   const handleSave = async () => {
     const payload: { dialog_api_key?: string; knowledge_build_api_key?: string } = {}
@@ -263,6 +394,18 @@ export function SettingsPage() {
               }}
               onToggleReveal={() => setShowKnowledgeBuildValue((prev) => !prev)}
               onChange={setKnowledgeBuildValue}
+            />
+
+            <KnowledgeProfileSection
+              available={knowledgeProfile.available}
+              status={knowledgeProfile.status}
+              updatedAt={knowledgeProfile.updated_at}
+              errorMessage={knowledgeProfile.error_message}
+              majorTopics={knowledgeProfile.major_topics}
+              highFrequencyEntities={knowledgeProfile.high_frequency_entities}
+              highFrequencyRelations={knowledgeProfile.high_frequency_relations}
+              recentFocuses={knowledgeProfile.recent_focuses}
+              renderedOverlay={knowledgeProfile.rendered_overlay}
             />
           </Stack>
         </Stack>

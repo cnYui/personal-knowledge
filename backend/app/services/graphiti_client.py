@@ -18,9 +18,9 @@ from app.services.stepfun_llm_client import StepFunLLMClient
 logger = logging.getLogger(__name__)
 
 DEFAULT_LONG_MEMORY_THRESHOLD = 2500
-DEFAULT_TARGET_CHUNK_LENGTH = 2000
+DEFAULT_TARGET_CHUNK_LENGTH = 500
 DEFAULT_MAX_CHUNK_LENGTH = 2500
-DEFAULT_MAX_CHUNK_COUNT = 8
+DEFAULT_MAX_CHUNK_COUNT = 15
 SENTENCE_SPLIT_PATTERN = re.compile(r'(?<=[。！？!?；;])')
 
 
@@ -182,7 +182,7 @@ class GraphitiClient:
         content: str,
         group_id: str,
         created_at: datetime,
-        episode_adder: Callable[[str, str], Awaitable[str]] | None = None,
+        episode_adder: Callable[[str, str], Awaitable[str | list[str]]] | None = None,
     ) -> list[str]:
         chunks = self.split_memory_content(content)
         if not chunks:
@@ -203,8 +203,11 @@ class GraphitiClient:
 
         for index, chunk in enumerate(chunks, start=1):
             chunk_title = title if total == 1 else f'{title} ({index}/{total})'
-            episode_uuid = await add_episode_for_chunk(chunk_title, chunk)
-            episode_uuids.append(episode_uuid)
+            episode_result = await add_episode_for_chunk(chunk_title, chunk)
+            if isinstance(episode_result, list):
+                episode_uuids.extend(episode_result)
+            else:
+                episode_uuids.append(episode_result)
 
         return episode_uuids
 

@@ -6,6 +6,7 @@ from threading import RLock
 from app.core.config import ENV_FILE_PATH, settings
 from app.core.env_store import EnvStore
 from app.schemas.settings import (
+    AgentKnowledgeProfileRead,
     ApiKeyFieldStatus,
     ModelConfigRead,
     ModelConfigUpdate,
@@ -121,6 +122,17 @@ class ModelConfigService:
                         configured=bool(self._knowledge_build_config.api_key),
                         masked_value=_mask_api_key(self._knowledge_build_config.api_key),
                     ),
+                ),
+                knowledge_profile=AgentKnowledgeProfileRead(
+                    available=False,
+                    status='missing',
+                    major_topics=[],
+                    high_frequency_entities=[],
+                    high_frequency_relations=[],
+                    recent_focuses=[],
+                    rendered_overlay='',
+                    updated_at=None,
+                    error_message=None,
                 ),
             )
 

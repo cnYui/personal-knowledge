@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useAppToast } from '../common/AppToastProvider'
 import { usePrompt, useResetPrompt, useUpdatePrompt } from '../../hooks/usePrompt'
 import { normalizeApiError } from '../../services/apiClient'
+import { unifiedCardSx } from '../../styles/cardStyles'
 
 interface PromptEditorProps {
   promptKey: string
@@ -87,12 +88,8 @@ export function PromptEditor({ promptKey }: PromptEditorProps) {
   return (
     <Paper
       sx={{
+        ...unifiedCardSx,
         p: 3,
-        borderRadius: 0.9,
-        border: '1px solid',
-        borderColor: 'divider',
-        boxShadow: '0 16px 34px rgba(20, 20, 19, 0.05)',
-        background: 'linear-gradient(180deg, #fffdf8 0%, #f6f2e8 100%)',
       }}
     >
       <Stack spacing={2}>

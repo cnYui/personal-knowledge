@@ -43,7 +43,20 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
     ],
-    allow_origin_regex=r"(chrome-extension|moz-extension)://.*",
+    allow_origin_regex=(
+        r"(chrome-extension|moz-extension)://.*"
+        r"|https://("
+        r"chat\.openai\.com"
+        r"|chatgpt\.com"
+        r"|gemini\.google\.com"
+        r"|kimi\.moonshot\.cn"
+        r"|(?:www\.)?kimi\.com"
+        r"|tongyi\.aliyun\.com"
+        r"|qianwen\.aliyun\.com"
+        r"|(?:www\.)?qianwen\.com"
+        r"|(?:www\.)?doubao\.com"
+        r")"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

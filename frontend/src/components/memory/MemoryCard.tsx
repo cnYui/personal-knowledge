@@ -3,6 +3,7 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import { Button, Card, CardContent, Collapse, IconButton, Stack, Typography } from '@mui/material'
 import { useState } from 'react'
 
+import { unifiedCardSx } from '../../styles/cardStyles'
 import { Memory } from '../../types/memory'
 import { formatDate } from '../../utils/format'
 
@@ -18,7 +19,7 @@ export function MemoryCard({
   const [expanded, setExpanded] = useState(false)
 
   return (
-    <Card sx={{ borderRadius: 0.75 }}>
+    <Card sx={{ ...unifiedCardSx }}>
       <CardContent>
         <Stack spacing={2}>
           <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>

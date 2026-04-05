@@ -1,6 +1,6 @@
 # Personal Knowledge Base
 
-一个面向个人学习与知识沉淀的全栈项目，结合了个人知识库、知识图谱和基于检索增强生成（RAG）的智能问答能力。你可以在这个系统里录入笔记、上传图文内容、管理记忆条目，并通过聊天界面基于已有知识进行检索和问答。
+一个面向个人学习与知识沉淀的全栈项目，结合了个人知识库、知识图谱、基于检索增强生成（RAG）的智能问答能力，以及浏览器插件采集能力。你可以在这个系统里录入笔记、上传图文内容、管理记忆条目，并通过聊天界面基于已有知识进行检索和问答；也可以在常见 AI 平台中直接选中内容，保存到你的个人知识库。
 
 ## 项目用途
 
@@ -16,7 +16,7 @@
 
 - 前端：React + TypeScript + Vite + Material UI
 - 后端：FastAPI + SQLAlchemy
-- 数据库：SQLite 或 PostgreSQL
+- 数据库：PostgreSQL
 - 图谱能力：Neo4j + Graphiti
 - 其他能力：OCR、图像处理、标题生成、RAG 问答
 
@@ -25,6 +25,7 @@
 ```text
 frontend/   前端项目（React + Vite）
 backend/    后端项目（FastAPI + 数据层 + 图谱相关逻辑）
+Chrome/     浏览器插件（AI 页面导航 + 知识采集）
 docs/       设计文档与实现方案
 ```
 
@@ -33,6 +34,7 @@ docs/       设计文档与实现方案
 - 根目录保留项目入口说明和运行相关文件
 - `frontend/` 存放前端应用代码
 - `backend/` 存放后端服务代码与后端专项文档
+- `Chrome/` 存放浏览器插件源码
 - `docs/superpowers/specs/` 存放设计说明
 - `docs/superpowers/plans/` 存放实现计划
 
@@ -44,9 +46,7 @@ docs/       设计文档与实现方案
 - Python 3.12+
 - Docker Desktop（用于 PostgreSQL 和 Neo4j）
 
-如果你只想快速跑起基础前后端，数据库可以先使用 SQLite。
-
-如果你要启用知识图谱相关功能，建议同时启动：
+如果你要启用知识图谱和 Agentic RAG 相关功能，建议同时启动：
 
 - PostgreSQL
 - Neo4j
@@ -74,7 +74,7 @@ VITE_API_BASE_URL=http://localhost:8000
 一个最小可运行示例：
 
 ```env
-DATABASE_URL=sqlite:///./app.db
+DATABASE_URL=postgresql+psycopg://pkb_user:pkb_password@localhost:5432/personal_knowledge_base
 UPLOAD_DIR=backend/uploads/images
 OCR_ENABLED=true
 MULTIMODAL_PROVIDER=mock
@@ -83,13 +83,19 @@ KNOWLEDGE_GRAPH_BASE_URL=http://localhost:8001
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_password_here
-OPENAI_API_KEY=your-api-key
-OPENAI_BASE_URL=https://api.stepfun.com/v1
+DIALOG_PROVIDER=deepseek
+DIALOG_BASE_URL=https://api.deepseek.com/v1
+DIALOG_MODEL=deepseek-chat
+DIALOG_API_KEY=your-api-key
+KNOWLEDGE_BUILD_PROVIDER=deepseek
+KNOWLEDGE_BUILD_BASE_URL=https://api.deepseek.com/v1
+KNOWLEDGE_BUILD_MODEL=deepseek-chat
+KNOWLEDGE_BUILD_API_KEY=your-api-key
 ```
 
 ## 前后端启动方式
 
-### 1. 启动基础依赖（推荐）
+### 1. 启动基础依赖
 
 如果你希望项目完整运行，先在项目根目录启动 PostgreSQL 和 Neo4j：
 
@@ -123,19 +129,23 @@ cd backend
 pip install -r requirements.txt
 ```
 
-启动方式一：使用项目自带启动脚本
+设置 Python 路径：
 
 ```bash
-python start.py
+$env:PYTHONPATH = (Get-Location).Path
 ```
 
-这个脚本会先初始化数据库，再启动 FastAPI 服务。
-
-启动方式二：直接使用 uvicorn
+使用 uvicorn 启动：
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+推荐说明：
+
+- 真实应用入口是 `backend/app/main.py`
+- `backend/start.py` 现在只是一个兼容包装，本质上仍然会启动 `uvicorn app.main:app`
+- 不再推荐使用 SQLite 作为运行时数据库
 
 后端默认访问地址：
 
@@ -159,7 +169,7 @@ npm install
 启动开发服务器：
 
 ```bash
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
 如需局域网访问，可使用：
@@ -179,8 +189,8 @@ http://localhost:5173
 为了减少报错，建议按照下面顺序启动：
 
 1. 在项目根目录执行 `docker compose up -d`
-2. 在 `backend/` 中执行 `python start.py`
-3. 在 `frontend/` 中执行 `npm run dev`
+2. 在 `backend/` 中执行 `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`
+3. 在 `frontend/` 中执行 `npm run dev -- --host 127.0.0.1 --port 5173`
 
 ## 项目主要功能
 
@@ -208,13 +218,21 @@ http://localhost:5173
 - 支持 RAG 检索增强
 - 结合图谱结果提升上下文关联能力
 
+### 浏览器插件
+
+- 在 `Chrome/` 目录中提供浏览器插件
+- 支持在 ChatGPT、Gemini、Kimi、通义千问、豆包等 AI 平台中注入侧边面板
+- 支持快速导航、收藏、选中文本采集
+- 支持将选中的单段文本或勾选的整组问答直接保存到个人知识库的 `记忆管理` 页面
+- 支持将选中的 AI 对话内容直接保存为个人知识库里的普通记忆
+
 ## 常用开发命令
 
 ### 前端
 
 ```bash
 cd frontend
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 5173
 npm run build
 ```
 
@@ -222,7 +240,7 @@ npm run build
 
 ```bash
 cd backend
-python start.py
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 pytest tests -v
 ```
 
@@ -248,7 +266,7 @@ python -m pytest backend/tests -v
 
 - `DATABASE_URL` 配置是否正确
 - PostgreSQL 容器是否已经启动
-- 如果只是本地调试，可先切换到 SQLite
+- `pkb-postgres` 是否监听 `5432`
 
 ### 3. 知识图谱功能不可用
 
@@ -263,3 +281,4 @@ python -m pytest backend/tests -v
 - 如果只验证基础前后端联通，可以先不深度使用图谱能力
 - 如果要完整体验知识图谱与 RAG，建议保留 `docker compose` 启动的 PostgreSQL 与 Neo4j
 - 后端图谱集成的更多细节可查看 `backend/README_GRAPHITI.md`
+- 浏览器插件的加载目录是 `Chrome/`，可在 `chrome://extensions/` 中以“加载已解压的扩展程序”方式使用

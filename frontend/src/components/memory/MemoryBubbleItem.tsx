@@ -4,6 +4,7 @@ import ErrorIcon from '@mui/icons-material/Error'
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty'
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
 
+import { unifiedCardHoverSx, unifiedCardMutedBackground, unifiedCardSx } from '../../styles/cardStyles'
 import { Memory } from '../../types/memory'
 import { formatDate } from '../../utils/format'
 
@@ -53,22 +54,18 @@ export function MemoryBubbleItem({
         onClick={() => onSelect(memory)}
         elevation={0}
         sx={{
+          ...unifiedCardSx,
+          ...unifiedCardHoverSx,
           px: 2,
           py: 1.65,
-          borderRadius: 0.9,
           cursor: 'pointer',
           maxWidth: { xs: '100%', md: '82%' },
           border: '1px solid',
           borderColor: memory.graph_status === 'added' ? 'rgba(120, 140, 93, 0.42)' : 'divider',
-          bgcolor: 'background.paper',
-          boxShadow: '0 14px 28px rgba(20, 20, 19, 0.05)',
-          background: 'linear-gradient(180deg, #fffdf8 0%, #f5f2ea 100%)',
-          transition: 'all 0.15s ease',
+          bgcolor: unifiedCardMutedBackground,
           '&:hover': {
             borderColor: 'rgba(20, 20, 19, 0.28)',
-            bgcolor: 'rgba(255, 253, 248, 1)',
-            boxShadow: '0 18px 34px rgba(20, 20, 19, 0.08)',
-            transform: 'translateY(-1px)',
+            bgcolor: unifiedCardMutedBackground,
           },
         }}
       >

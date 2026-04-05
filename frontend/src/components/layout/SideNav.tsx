@@ -3,6 +3,7 @@ import ChatIcon from '@mui/icons-material/Chat'
 import AccountTreeIcon from '@mui/icons-material/AccountTree'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
+import HistoryEduOutlinedIcon from '@mui/icons-material/HistoryEduOutlined'
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 import { Box, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Tooltip, Typography } from '@mui/material'
@@ -13,6 +14,7 @@ const items = [
   { to: '/upload', label: '记忆上传', icon: <UploadFileIcon /> },
   { to: '/chat', label: '知识对话', icon: <ChatIcon /> },
   { to: '/graph', label: '知识图谱', icon: <AccountTreeIcon /> },
+  { to: '/daily-review', label: '每日回顾', icon: <HistoryEduOutlinedIcon /> },
   { to: '/settings', label: '设置', icon: <SettingsOutlinedIcon /> },
 ]
 

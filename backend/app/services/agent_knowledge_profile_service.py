@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 from app.core.database import SessionLocal
 from app.repositories.agent_knowledge_profile_repository import AgentKnowledgeProfileRepository
@@ -6,11 +7,14 @@ from app.repositories.agent_knowledge_profile_repository import AgentKnowledgePr
 
 @dataclass
 class AgentKnowledgeProfileSnapshot:
+    status: str
     major_topics: list[str]
     high_frequency_entities: list[str]
     high_frequency_relations: list[str]
     recent_focuses: list[str]
     rendered_overlay: str
+    updated_at: datetime | None
+    error_message: str | None
 
 
 class AgentKnowledgeProfileService:
@@ -30,11 +34,33 @@ class AgentKnowledgeProfileService:
             if profile is None:
                 return None
             return AgentKnowledgeProfileSnapshot(
+                status=str(profile.status or 'ready'),
                 major_topics=list(profile.major_topics or []),
                 high_frequency_entities=list(profile.high_frequency_entities or []),
                 high_frequency_relations=list(profile.high_frequency_relations or []),
                 recent_focuses=list(profile.recent_focuses or []),
                 rendered_overlay=str(profile.rendered_overlay or ''),
+                updated_at=profile.updated_at,
+                error_message=profile.error_message,
+            )
+        finally:
+            db.close()
+
+    def get_latest_snapshot(self) -> AgentKnowledgeProfileSnapshot | None:
+        db = self.session_factory()
+        try:
+            profile = self.repository.get_latest_profile(db)
+            if profile is None:
+                return None
+            return AgentKnowledgeProfileSnapshot(
+                status=str(profile.status or 'building'),
+                major_topics=list(profile.major_topics or []),
+                high_frequency_entities=list(profile.high_frequency_entities or []),
+                high_frequency_relations=list(profile.high_frequency_relations or []),
+                recent_focuses=list(profile.recent_focuses or []),
+                rendered_overlay=str(profile.rendered_overlay or ''),
+                updated_at=profile.updated_at,
+                error_message=profile.error_message,
             )
         finally:
             db.close()

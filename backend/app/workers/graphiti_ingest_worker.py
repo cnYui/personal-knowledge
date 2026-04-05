@@ -14,9 +14,11 @@ from app.services.graphiti_client import GraphitiClient
 
 logger = logging.getLogger(__name__)
 
-MAX_RATE_LIMIT_RETRIES = 3
+MAX_CHUNK_RETRIES = 3
 INITIAL_RETRY_DELAY_SECONDS = 2
 GRAPH_BUILD_TIMEOUT_SECONDS = 90
+MAX_CHUNK_SPLIT_DEPTH = 1
+MIN_CHUNK_LENGTH_FOR_BISECTION = 800
 
 
 class GraphitiIngestWorker:
@@ -132,11 +134,60 @@ class GraphitiIngestWorker:
         finally:
             db.close()
 
-    async def _add_memory_episode_with_retry(self, db, memory, title: str, content: str):
-        """Add one memory chunk episode with retry/backoff for rate limit errors."""
+    async def _add_memory_episode_with_retry(
+        self,
+        db,
+        memory,
+        title: str,
+        content: str,
+        split_depth: int = 0,
+    ) -> list[str]:
+        """Add one memory chunk episode with retries, then bisect once if the chunk still fails."""
+        try:
+            episode_uuid = await self._attempt_single_chunk_with_retries(
+                db=db,
+                memory=memory,
+                title=title,
+                content=content,
+            )
+            return [episode_uuid]
+        except Exception as error:
+            should_bisect = split_depth < MAX_CHUNK_SPLIT_DEPTH and len((content or '').strip()) >= MIN_CHUNK_LENGTH_FOR_BISECTION
+            if not should_bisect:
+                raise
+
+            child_chunks = self._bisect_chunk_content(content)
+            if len(child_chunks) < 2:
+                raise
+
+            logger.warning(
+                '知识图谱构建分段降级: memory_id=%s, title=%s, split_depth=%s, original_length=%s, child_lengths=%s',
+                memory.id,
+                title,
+                split_depth + 1,
+                len(content or ''),
+                [len(chunk) for chunk in child_chunks],
+            )
+
+            episode_uuids: list[str] = []
+            total_children = len(child_chunks)
+            for index, child_chunk in enumerate(child_chunks, start=1):
+                child_title = f'{title} [{index}/{total_children}]'
+                child_episode_uuids = await self._add_memory_episode_with_retry(
+                    db=db,
+                    memory=memory,
+                    title=child_title,
+                    content=child_chunk,
+                    split_depth=split_depth + 1,
+                )
+                episode_uuids.extend(child_episode_uuids)
+
+            return episode_uuids
+
+    async def _attempt_single_chunk_with_retries(self, db, memory, title: str, content: str) -> str:
         last_error = None
 
-        for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+        for attempt in range(MAX_CHUNK_RETRIES + 1):
             try:
                 return await asyncio.wait_for(
                     self.graphiti_client.add_memory_episode(
@@ -150,30 +201,73 @@ class GraphitiIngestWorker:
                 )
             except Exception as error:
                 last_error = error
+                if attempt >= MAX_CHUNK_RETRIES:
+                    break
+
                 is_rate_limited = self._is_rate_limited_error(error)
+                if is_rate_limited:
+                    delay_seconds = INITIAL_RETRY_DELAY_SECONDS * (2 ** attempt)
+                    retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+                    memory.graph_error = (
+                        f'__retry__:attempt={attempt + 1};max={MAX_CHUNK_RETRIES};'
+                        f'retry_at={retry_at.isoformat()}'
+                    )
+                    db.commit()
 
-                if not is_rate_limited or attempt >= MAX_RATE_LIMIT_RETRIES:
-                    raise
-
-                delay_seconds = INITIAL_RETRY_DELAY_SECONDS * (2 ** attempt)
-                retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
-                memory.graph_error = (
-                    f'__retry__:attempt={attempt + 1};max={MAX_RATE_LIMIT_RETRIES};'
-                    f'retry_at={retry_at.isoformat()}'
-                )
-                db.commit()
+                    logger.warning(
+                        '知识图谱构建限流: memory_id=%s, attempt=%s/%s, %ss 后自动重试',
+                        memory.id,
+                        attempt + 1,
+                        MAX_CHUNK_RETRIES + 1,
+                        delay_seconds,
+                    )
+                    await asyncio.sleep(delay_seconds)
+                    continue
 
                 logger.warning(
-                    '知识图谱构建限流: memory_id=%s, attempt=%s/%s, %ss 后自动重试',
+                    '知识图谱构建重试: memory_id=%s, title=%s, attempt=%s/%s, error=%s',
                     memory.id,
+                    title,
                     attempt + 1,
-                    MAX_RATE_LIMIT_RETRIES + 1,
-                    delay_seconds,
+                    MAX_CHUNK_RETRIES + 1,
+                    error,
                 )
-                await asyncio.sleep(delay_seconds)
 
         if last_error:
             raise last_error
+        raise RuntimeError('Chunk graph ingestion failed without a captured exception.')
+
+    def _bisect_chunk_content(self, content: str) -> list[str]:
+        normalized = (content or '').strip()
+        if len(normalized) < 2:
+            return [normalized] if normalized else []
+
+        midpoint = len(normalized) // 2
+        split_index = self._find_bisect_index(normalized, midpoint)
+        left = normalized[:split_index].strip()
+        right = normalized[split_index:].strip()
+
+        if not left or not right:
+            return [normalized]
+
+        return [left, right]
+
+    def _find_bisect_index(self, content: str, midpoint: int) -> int:
+        preferred_chars = '。！？!?；;，,、\n '
+        search_radius = max(len(content) // 6, 40)
+        start = max(1, midpoint - search_radius)
+        end = min(len(content) - 1, midpoint + search_radius)
+
+        for offset in range(0, max(midpoint - start, end - midpoint) + 1):
+            right = midpoint + offset
+            if right < end and content[right] in preferred_chars:
+                return right + 1
+
+            left = midpoint - offset
+            if left > start and content[left] in preferred_chars:
+                return left + 1
+
+        return midpoint
 
     def _is_rate_limited_error(self, error: Exception) -> bool:
         """Detect whether an error is caused by API rate limiting."""
@@ -193,7 +287,7 @@ class GraphitiIngestWorker:
 
         if self._is_rate_limited_error(error):
             return (
-                f'Rate limit exceeded: 上游模型触发限流，已自动重试 {MAX_RATE_LIMIT_RETRIES} 次，'
+                f'Rate limit exceeded: 上游模型触发限流，已自动重试 {MAX_CHUNK_RETRIES} 次，'
                 '请稍后重试。'
             )
 

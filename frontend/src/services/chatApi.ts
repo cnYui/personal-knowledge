@@ -1,4 +1,4 @@
-import { AgentTrace, ChatMessage, ChatReference, ChatTimelineEvent } from '../types/chat'
+import { AgentTrace, ChatMessage, ChatReference, ChatTimelineEvent, SentenceCitation } from '../types/chat'
 import { ApiErrorPayload } from '../types/api'
 import { buildApiUrl, createApiError, normalizeApiError } from './apiClient'
 
@@ -37,6 +37,8 @@ export async function sendChatMessageStream(
   message: string,
   onChunk: (content: string) => void,
   onReferences: (refs: ChatReference[]) => void,
+  onCitationSection: (items: string[]) => void,
+  onSentenceCitations: (items: SentenceCitation[]) => void,
   onTimeline: (event: ChatTimelineEvent) => void,
   onTrace: (trace: AgentTrace) => void,
   onComplete: (fullContent: string) => void,
@@ -92,6 +94,12 @@ export async function sendChatMessageStream(
           if (data.type === 'references') {
             const references = Array.isArray(data.content) ? data.content : []
             onReferences(references)
+          } else if (data.type === 'citation_section') {
+            const items = Array.isArray(data.content) ? data.content.map((item: unknown) => String(item)) : []
+            onCitationSection(items)
+          } else if (data.type === 'sentence_citations') {
+            const items = Array.isArray(data.content) ? (data.content as SentenceCitation[]) : []
+            onSentenceCitations(items)
           } else if (data.type === 'timeline') {
             const event = data.content as ChatTimelineEvent
             if (event?.id && event?.title) {

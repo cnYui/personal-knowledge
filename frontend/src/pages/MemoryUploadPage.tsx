@@ -16,8 +16,6 @@ export function MemoryUploadPage() {
     <Box sx={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', pr: 1 }}>
         <Stack spacing={3.5}>
-          <PromptEditor promptKey="text_optimization" />
-
           {success ? <Alert severity="success">{success}</Alert> : null}
           {mutation.isError ? <Alert severity="error">上传失败，请稍后重试。</Alert> : null}
           <UploadForm
@@ -37,6 +35,8 @@ export function MemoryUploadPage() {
               }
             }}
           />
+
+          <PromptEditor promptKey="text_optimization" />
         </Stack>
       </Box>
     </Box>

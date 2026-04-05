@@ -4,6 +4,8 @@ export interface ChatMessage {
   content: string
   created_at?: string | null
   references?: ChatReference[]
+  citationSection?: string[]
+  sentenceCitations?: SentenceCitation[]
   agentTrace?: AgentTrace | null
   thinkingSteps?: string[]
   timeline?: ChatTimelineEvent[]
@@ -31,7 +33,14 @@ export interface ChatReference {
 export interface ChatResponse {
   answer: string
   references: ChatReference[]
+  citation_section?: string[]
+  sentence_citations?: SentenceCitation[]
   agent_trace?: AgentTrace | null
+}
+
+export interface SentenceCitation {
+  sentence_index: number
+  citation_indexes: number[]
 }
 
 export interface AgentTrace {

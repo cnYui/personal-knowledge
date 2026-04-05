@@ -1,5 +1,6 @@
 import { Box, Divider, Paper, Typography } from '@mui/material'
 
+import { unifiedCardSx } from '../../styles/cardStyles'
 import { GraphNode } from '../../types/graph'
 
 interface NodeDetailPanelProps {
@@ -11,13 +12,9 @@ export function NodeDetailPanel({ node }: NodeDetailPanelProps) {
     return (
       <Paper
         sx={{
+          ...unifiedCardSx,
           p: 3,
           height: '100%',
-          borderRadius: 0.9,
-          border: '1px solid',
-          borderColor: 'divider',
-          boxShadow: '0 16px 34px rgba(20, 20, 19, 0.05)',
-          background: 'linear-gradient(180deg, #fffdf8 0%, #f6f2e8 100%)',
         }}
       >
         <Typography color="text.secondary" textAlign="center">
@@ -30,14 +27,10 @@ export function NodeDetailPanel({ node }: NodeDetailPanelProps) {
   return (
     <Paper
       sx={{
+        ...unifiedCardSx,
         p: 3,
         height: '100%',
         overflow: 'auto',
-        borderRadius: 0.9,
-        border: '1px solid',
-        borderColor: 'divider',
-        boxShadow: '0 16px 34px rgba(20, 20, 19, 0.05)',
-        background: 'linear-gradient(180deg, #fffdf8 0%, #f6f2e8 100%)',
       }}
     >
       <Typography variant="h6" fontWeight={600} gutterBottom>

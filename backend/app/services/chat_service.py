@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.model_errors import ModelAPIError
 from app.repositories.chat_repository import ChatRepository
+from app.schemas.agent import AgentTrace
 from app.schemas.chat import ChatReference, ChatResponse
 from app.workflow.canvas_factory import CanvasFactory
 from app.workflow.engine.citation_postprocessor import CitationPostProcessor, CitationResult
@@ -50,6 +51,9 @@ class ChatService:
                 normalized_fallback.append(item)
         return normalized_fallback
 
+    def _build_citation_section(self, citation_result: CitationResult) -> list[str]:
+        return [str(citation.get('label') or '').strip() for citation in citation_result.citations if str(citation.get('label') or '').strip()]
+
     def _augment_trace(
         self,
         trace: Any,
@@ -60,18 +64,23 @@ class ChatService:
         reference_store_snapshot: dict[str, Any],
         workflow_debug: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        tool_loop_payload = workflow_debug or {
+            'forced_retrieval': False,
+            'tool_rounds_exceeded': False,
+            'tool_steps': [],
+        }
         if trace is None:
-            return None
+            trace = AgentTrace(
+                mode='graph_rag',
+                retrieval_rounds=len(tool_loop_payload.get('tool_steps') or []),
+                final_action='timeline_only',
+            )
         trace_payload = trace.model_dump() if hasattr(trace, 'model_dump') else dict(trace)
         trace_payload['canvas'] = {
             'execution_path': execution_path,
             'events': canvas_events,
         }
-        trace_payload['tool_loop'] = workflow_debug or {
-            'forced_retrieval': False,
-            'tool_rounds_exceeded': False,
-            'tool_steps': [],
-        }
+        trace_payload['tool_loop'] = tool_loop_payload
         trace_payload['citation'] = {
             'count': len(citation_result.citations),
             'used_general_fallback': citation_result.used_general_fallback,
@@ -177,7 +186,7 @@ class ChatService:
         if message_output is None:
             raise RuntimeError('Canvas workflow did not produce a message output')
 
-        citation_result = self.citation_postprocessor.process(
+        citation_result = await self.citation_postprocessor.process(
             answer=str(message_output.get('content') or ''),
             reference_store=canvas.reference_store,
         )
@@ -197,6 +206,8 @@ class ChatService:
         return {
             'answer': citation_result.answer,
             'references': references,
+            'citation_section': self._build_citation_section(citation_result),
+            'sentence_citations': list(citation_result.sentence_citations),
             'agent_trace': agent_trace,
         }
 
@@ -208,6 +219,8 @@ class ChatService:
         return ChatResponse(
             answer=str(result["answer"]),
             references=list(result["references"]),
+            citation_section=list(result.get("citation_section") or []),
+            sentence_citations=list(result.get("sentence_citations") or []),
             agent_trace=result.get("agent_trace"),
         )
 
@@ -217,6 +230,8 @@ class ChatService:
         return ChatResponse(
             answer=str(result["answer"]),
             references=list(result["references"]),
+            citation_section=list(result.get("citation_section") or []),
+            sentence_citations=list(result.get("sentence_citations") or []),
             agent_trace=result.get("agent_trace"),
         )
 
@@ -228,6 +243,7 @@ class ChatService:
             message_output: dict[str, Any] | None = None
             canvas_events: list[dict[str, Any]] = []
             timeline_order = 1
+            timeline_emitted = False
             queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
             def runtime_event_sink(event: dict[str, Any]) -> None:
@@ -252,6 +268,7 @@ class ChatService:
                     if chunk:
                         yield chunk
                         timeline_order += 1
+                        timeline_emitted = True
                     continue
 
                 event = payload
@@ -267,6 +284,7 @@ class ChatService:
                 for chunk in self._timeline_chunks_from_canvas_event(event, timeline_order):
                     yield chunk
                     timeline_order += 1
+                    timeline_emitted = True
 
                 if event.event != 'node_finished':
                     continue
@@ -280,6 +298,17 @@ class ChatService:
             if message_output is None:
                 raise RuntimeError('Canvas workflow did not produce a message output')
 
+            if not timeline_emitted:
+                yield self._timeline_chunk(
+                    event_id='understand-question',
+                    kind='understand',
+                    title='理解问题',
+                    detail='正在理解你的问题。',
+                    status='done',
+                    order=timeline_order,
+                )
+                timeline_order += 1
+
             yield self._timeline_chunk(
                 event_id='citation',
                 kind='citation',
@@ -288,9 +317,10 @@ class ChatService:
                 status='started',
                 order=timeline_order,
             )
+            timeline_emitted = True
             timeline_order += 1
 
-            citation_result = self.citation_postprocessor.process(
+            citation_result = await self.citation_postprocessor.process(
                 answer=str(message_output.get('content') or ''),
                 reference_store=canvas.reference_store,
             )
@@ -327,6 +357,8 @@ class ChatService:
             result = {
                 'answer': citation_result.answer,
                 'references': references,
+                'citation_section': self._build_citation_section(citation_result),
+                'sentence_citations': list(citation_result.sentence_citations),
                 'agent_trace': agent_trace,
             }
             for chunk in (
@@ -337,6 +369,14 @@ class ChatService:
                         reference.model_dump() if hasattr(reference, 'model_dump') else reference
                         for reference in result['references']
                     ],
+                },
+                {
+                    'type': 'citation_section',
+                    'content': list(result.get('citation_section') or []),
+                },
+                {
+                    'type': 'sentence_citations',
+                    'content': list(result.get('sentence_citations') or []),
                 },
                 {'type': 'content', 'content': str(result['answer'])},
                 {'type': 'done', 'content': ''},
