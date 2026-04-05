@@ -1,11 +1,31 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+from app.core.database import Base
+from app.models.memory import Memory, MemoryGraphEpisode
 from app.schemas.agent import GraphRetrievalResult
 from app.schemas.chat import ChatReference
 from app.services.agent_tools.graph_retrieval_tool import GraphRetrievalTool
 from app.services.knowledge_graph_service import KnowledgeGraphService
+
+
+SQLALCHEMY_TEST_DATABASE_URL = 'sqlite:///./test_graph_retrieval.db'
+test_engine = create_engine(SQLALCHEMY_TEST_DATABASE_URL, connect_args={'check_same_thread': False})
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+
+@pytest.fixture
+def db_session():
+    Base.metadata.create_all(bind=test_engine)
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+        Base.metadata.drop_all(bind=test_engine)
 
 
 def test_graph_retrieval_result_defaults():
@@ -40,6 +60,101 @@ async def test_retrieve_graph_context_returns_structured_result(monkeypatch):
     assert result.retrieved_edge_count == 1
     assert '关系: Alice likes green tea' in result.context
     assert len(result.references) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.anyio
+async def test_retrieve_graph_context_filters_out_non_latest_episode_edges(db_session):
+    latest_memory = Memory(title='Latest', title_status='ready', content='Body', group_id='default')
+    old_memory = Memory(title='Old', title_status='ready', content='Body', group_id='default')
+    db_session.add_all([latest_memory, old_memory])
+    db_session.commit()
+    db_session.add_all(
+        [
+            MemoryGraphEpisode(
+                memory_id=latest_memory.id,
+                episode_uuid='episode-latest',
+                version=2,
+                chunk_index=0,
+                is_latest=True,
+            ),
+            MemoryGraphEpisode(
+                memory_id=old_memory.id,
+                episode_uuid='episode-old',
+                version=1,
+                chunk_index=0,
+                is_latest=False,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    edges = [
+        SimpleNamespace(
+            fact='Old fact',
+            source_node=SimpleNamespace(name='Old', summary='历史版本'),
+            target_node=SimpleNamespace(name='Tea', summary='饮品'),
+            episode_uuid='episode-old',
+        ),
+        SimpleNamespace(
+            fact='Latest fact',
+            source_node=SimpleNamespace(name='Latest', summary='当前版本'),
+            target_node=SimpleNamespace(name='Tea', summary='饮品'),
+            episode_uuid='episode-latest',
+        ),
+    ]
+
+    async def fake_search(query: str, group_id: str = 'default', limit: int = 5):
+        return edges
+
+    service = KnowledgeGraphService.__new__(KnowledgeGraphService)
+    service.graphiti_client = SimpleNamespace(search=fake_search)
+    service.db_factory = lambda: db_session
+
+    result = await service.retrieve_graph_context('Tea?')
+
+    assert result.has_enough_evidence is True
+    assert result.retrieved_edge_count == 1
+    assert 'Latest fact' in result.context
+    assert 'Old fact' not in result.context
+
+
+@pytest.mark.asyncio
+@pytest.mark.anyio
+async def test_retrieve_graph_context_returns_empty_when_only_history_matches(db_session):
+    memory = Memory(title='Old', title_status='ready', content='Body', group_id='default')
+    db_session.add(memory)
+    db_session.commit()
+    db_session.add(
+        MemoryGraphEpisode(
+            memory_id=memory.id,
+            episode_uuid='episode-old-only',
+            version=1,
+            chunk_index=0,
+            is_latest=False,
+        )
+    )
+    db_session.commit()
+
+    async def fake_search(query: str, group_id: str = 'default', limit: int = 5):
+        return [
+            SimpleNamespace(
+                fact='Old fact only',
+                source_node=SimpleNamespace(name='Old', summary='历史版本'),
+                target_node=SimpleNamespace(name='Tea', summary='饮品'),
+                episode_uuid='episode-old-only',
+            )
+        ]
+
+    service = KnowledgeGraphService.__new__(KnowledgeGraphService)
+    service.graphiti_client = SimpleNamespace(search=fake_search)
+    service.db_factory = lambda: db_session
+
+    result = await service.retrieve_graph_context('Tea?')
+
+    assert result.has_enough_evidence is False
+    assert result.retrieved_edge_count == 0
+    assert result.context == ''
 
 
 @pytest.mark.asyncio

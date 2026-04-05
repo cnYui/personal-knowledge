@@ -6,6 +6,8 @@ import logging
 
 from openai import AsyncOpenAI
 
+from app.core.database import SessionLocal
+from app.repositories.memory_graph_episode_repository import MemoryGraphEpisodeRepository
 from app.core.model_errors import map_model_api_error, missing_api_key_error
 from app.schemas.agent import GraphRetrievalResult
 from app.schemas.chat import ChatReference
@@ -24,6 +26,8 @@ class KnowledgeGraphService:
         graphiti_client: GraphitiClient | None = None,
         llm_client: AsyncOpenAI | None = None,
         model_config_service_instance: ModelConfigService | None = None,
+        episode_repository: MemoryGraphEpisodeRepository | None = None,
+        db_factory=None,
     ):
         """Initialize the knowledge graph service."""
         self.model_config_service = model_config_service_instance or model_config_service
@@ -31,10 +35,37 @@ class KnowledgeGraphService:
             model_config_service_instance=self.model_config_service
         )
         self.llm_client = llm_client
+        self.episode_repository = episode_repository or MemoryGraphEpisodeRepository()
+        self.db_factory = db_factory or SessionLocal
         self._managed_llm_client = llm_client is None
         self._dialog_signature: tuple[str, str, str, int] | None = None
         self._dialog_model = 'deepseek-chat'
         logger.info('KnowledgeGraphService initialized')
+
+    def _extract_episode_uuid(self, edge) -> str | None:
+        return getattr(edge, 'episode_uuid', None) or getattr(edge, 'source_episode_uuid', None)
+
+    def _filter_latest_edges(self, edges: list):
+        episode_uuids = [episode_uuid for edge in edges if (episode_uuid := self._extract_episode_uuid(edge))]
+        if not episode_uuids:
+            return edges
+
+        episode_repository = getattr(self, 'episode_repository', None) or MemoryGraphEpisodeRepository()
+        db_factory = getattr(self, 'db_factory', None) or SessionLocal
+
+        db = db_factory()
+        try:
+            latest_episode_uuids = episode_repository.get_latest_episode_uuid_set(db, episode_uuids)
+        finally:
+            close = getattr(db, 'close', None)
+            if callable(close):
+                close()
+
+        return [
+            edge
+            for edge in edges
+            if (episode_uuid := self._extract_episode_uuid(edge)) and episode_uuid in latest_episode_uuids
+        ]
 
     def _ensure_dialog_client(self) -> None:
         if not getattr(self, '_managed_llm_client', False):
@@ -85,6 +116,7 @@ class KnowledgeGraphService:
     async def retrieve_graph_context(self, query: str, group_id: str = 'default') -> GraphRetrievalResult:
         """Retrieve graph evidence and normalize it into a structured result."""
         edges = await self.graphiti_client.search(query, group_id=group_id, limit=5)
+        edges = self._filter_latest_edges(edges)
 
         context_parts: list[str] = []
         references: list[ChatReference] = []
