@@ -13,6 +13,7 @@ from app.services.agent_knowledge_profile_service import (
     AgentKnowledgeProfileService,
     agent_knowledge_profile_service,
 )
+from app.services.agent_tools.graph_history_tool import GraphHistoryTool
 from app.services.agent_tools.graph_retrieval_tool import GraphRetrievalTool
 from app.services.knowledge_graph_service import KnowledgeGraphService
 from app.workflow.engine.tool_loop import ToolLoopEngine
@@ -87,6 +88,7 @@ class AgentNode(WorkflowNode):
         tool_loop_engine: ToolLoopEngine | None = None,
         knowledge_graph_service: KnowledgeGraphService | None = None,
         graph_retrieval_tool: GraphRetrievalTool | None = None,
+        graph_history_tool: GraphHistoryTool | None = None,
         llm_client: Any | None = None,
         knowledge_profile_service: AgentKnowledgeProfileService | None = None,
     ) -> None:
@@ -96,6 +98,7 @@ class AgentNode(WorkflowNode):
         )
         self.knowledge_graph_service = shared_knowledge_graph_service
         self.graph_retrieval_tool = graph_retrieval_tool
+        self.graph_history_tool = graph_history_tool
         self.llm_client = llm_client or getattr(shared_knowledge_graph_service, 'llm_client', None)
         self.knowledge_profile_service = knowledge_profile_service or agent_knowledge_profile_service
         self.tool_loop_engine = tool_loop_engine
@@ -116,6 +119,11 @@ class AgentNode(WorkflowNode):
                 knowledge_graph_service=self._get_knowledge_graph_service()
             )
         return self.graph_retrieval_tool
+
+    def _get_graph_history_tool(self) -> GraphHistoryTool:
+        if self.graph_history_tool is None:
+            self.graph_history_tool = GraphHistoryTool()
+        return self.graph_history_tool
 
     def _get_llm_client(self) -> Any:
         if self.llm_client is None:
@@ -188,23 +196,66 @@ class AgentNode(WorkflowNode):
         )
 
     def _tool_schema(self) -> dict[str, Any]:
+        return self._tool_schemas()[0]
+
+    def _graph_history_tool_schema(self) -> dict[str, Any]:
         return {
             'type': 'function',
             'function': {
-                'name': GraphRetrievalTool.name,
-                'description': GraphRetrievalTool.description,
+                'name': GraphHistoryTool.name,
+                'description': 'Retrieve structured history evidence for memory or entity evolution queries.',
                 'parameters': {
                     'type': 'object',
                     'properties': {
-                        'query': {
+                        'target_type': {
                             'type': 'string',
-                            'description': 'The search query used to retrieve evidence from the knowledge graph.',
-                        }
+                            'enum': ['memory', 'entity', 'relation_topic'],
+                            'description': 'The history target type to inspect.',
+                        },
+                        'target_value': {
+                            'type': 'string',
+                            'description': 'The memory identifier, entity name, or relation/topic prompt to inspect.',
+                        },
+                        'mode': {
+                            'type': 'string',
+                            'enum': ['timeline', 'compare', 'summarize'],
+                            'description': 'The history response mode.',
+                        },
+                        'question': {
+                            'type': 'string',
+                            'description': 'Optional user question that provides extra history lookup context.',
+                        },
+                        'constraints': {
+                            'type': 'object',
+                            'description': 'Optional history lookup constraints such as entity_match_mode or time_range.',
+                        },
                     },
-                    'required': ['query'],
+                    'required': ['target_type', 'target_value', 'mode'],
                 },
             },
         }
+
+    def _tool_schemas(self) -> list[dict[str, Any]]:
+        return [
+            {
+                'type': 'function',
+                'function': {
+                    'name': GraphRetrievalTool.name,
+                    'description': GraphRetrievalTool.description,
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {
+                            'query': {
+                                'type': 'string',
+                                'description': 'The search query used to retrieve evidence from the knowledge graph.',
+                            }
+                        },
+                        'required': ['query'],
+                    },
+                },
+            },
+            self._graph_history_tool_schema(),
+        ]
 
     def _build_messages(self, context, query: str) -> list[dict[str, Any]]:
         history: list[dict[str, Any]] = []
@@ -329,6 +380,7 @@ class AgentNode(WorkflowNode):
             node_id=self.node_id,
             group_id=group_id,
         )
+        history_tool = self._get_graph_history_tool()
 
         def emit_timeline(event: dict[str, Any]) -> None:
             canvas.emit_runtime_event(event)
@@ -347,8 +399,11 @@ class AgentNode(WorkflowNode):
 
         tool_loop_result = await self._get_tool_loop_engine().run(
             messages=self._build_messages(context, query),
-            tool_schemas=[self._tool_schema()],
-            tool_registry={graph_tool.name: graph_tool},
+            tool_schemas=self._tool_schemas(),
+            tool_registry={
+                graph_tool.name: graph_tool,
+                history_tool.name: history_tool,
+            },
             system_prompt=system_prompt,
             completion_kwargs={'temperature': float(self.config.get('temperature', 0.2))},
             event_callback=emit_timeline,
