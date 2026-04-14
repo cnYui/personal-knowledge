@@ -2,6 +2,7 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
 import ExpandMoreOutlinedIcon from '@mui/icons-material/ExpandMoreOutlined'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import KeyOutlinedIcon from '@mui/icons-material/KeyOutlined'
+import RefreshOutlinedIcon from '@mui/icons-material/RefreshOutlined'
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined'
 import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined'
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined'
@@ -14,6 +15,7 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   IconButton,
   InputAdornment,
   Paper,
@@ -28,7 +30,9 @@ import { ErrorState } from '../components/common/ErrorState'
 import { LoadingState } from '../components/common/LoadingState'
 import { useModelConfig, useUpdateModelConfig } from '../hooks/useModelConfig'
 import { normalizeApiError } from '../services/apiClient'
+import { fetchComposedPrompt } from '../services/promptApi'
 import { unifiedCardSx } from '../styles/cardStyles'
+import { ComposedPrompt } from '../types/prompt'
 import { AgentKnowledgeProfileStatus } from '../types/settings'
 
 const EMPTY_KNOWLEDGE_PROFILE: AgentKnowledgeProfileStatus = {
@@ -188,10 +192,25 @@ function KnowledgeProfileSection({
   recentFocuses,
   renderedOverlay,
 }: KnowledgeProfileSectionProps) {
+  const [composedPrompt, setComposedPrompt] = useState<ComposedPrompt | null>(null)
+  const [loadingComposed, setLoadingComposed] = useState(false)
+
   const statusLabel =
     status === 'ready' ? '已就绪' : status === 'building' ? '生成中' : status === 'failed' ? '生成失败' : '未生成'
   const statusColor = status === 'ready' ? 'success' : status === 'failed' ? 'error' : 'default'
   const updatedLabel = updatedAt ? new Date(updatedAt).toLocaleString('zh-CN') : '暂无记录'
+
+  const handleLoadComposedPrompt = async () => {
+    setLoadingComposed(true)
+    try {
+      const data = await fetchComposedPrompt()
+      setComposedPrompt(data)
+    } catch {
+      // ignore
+    } finally {
+      setLoadingComposed(false)
+    }
+  }
 
   return (
     <Paper
@@ -228,7 +247,7 @@ function KnowledgeProfileSection({
         <Accordion disableGutters elevation={0} sx={{ backgroundColor: 'transparent', '&:before': { display: 'none' } }}>
           <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
             <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-              查看 Agent Prompt Overlay
+              查看 Agent Prompt Overlay（动态画像部分）
             </Typography>
           </AccordionSummary>
           <AccordionDetails sx={{ pt: 0 }}>
@@ -251,6 +270,100 @@ function KnowledgeProfileSection({
                 {renderedOverlay || '当前还没有可展示的 overlay 文本。'}
               </Typography>
             </Box>
+          </AccordionDetails>
+        </Accordion>
+
+        <Accordion disableGutters elevation={0} sx={{ backgroundColor: 'transparent', '&:before': { display: 'none' } }}>
+          <AccordionSummary
+            expandIcon={<ExpandMoreOutlinedIcon />}
+            onClick={() => {
+              if (!composedPrompt && !loadingComposed) {
+                handleLoadComposedPrompt()
+              }
+            }}
+          >
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                查看完整组合提示词（基础 + 画像）
+              </Typography>
+              {loadingComposed && <CircularProgress size={16} />}
+            </Stack>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <Stack spacing={2}>
+              <Box>
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                  <Typography variant="caption" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                    基础系统提示词
+                  </Typography>
+                  <Button
+                    size="small"
+                    startIcon={<RefreshOutlinedIcon />}
+                    onClick={handleLoadComposedPrompt}
+                    disabled={loadingComposed}
+                  >
+                    刷新
+                  </Button>
+                </Stack>
+                <Box
+                  sx={{
+                    p: 2,
+                    borderRadius: 0.75,
+                    border: '1px solid rgba(25, 118, 210, 0.3)',
+                    backgroundColor: 'rgba(25, 118, 210, 0.04)',
+                    maxHeight: 300,
+                    overflow: 'auto',
+                  }}
+                >
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      whiteSpace: 'pre-wrap',
+                      color: 'text.secondary',
+                      lineHeight: 1.8,
+                      fontFamily: 'monospace',
+                      fontSize: '0.8rem',
+                    }}
+                  >
+                    {composedPrompt?.base_prompt || '点击展开加载...'}
+                  </Typography>
+                </Box>
+              </Box>
+
+              <Box>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: 'success.main', mb: 1, display: 'block' }}>
+                  动态知识画像 Overlay（自动拼接）
+                </Typography>
+                <Box
+                  sx={{
+                    p: 2,
+                    borderRadius: 0.75,
+                    border: '1px solid rgba(46, 125, 50, 0.3)',
+                    backgroundColor: 'rgba(46, 125, 50, 0.04)',
+                    maxHeight: 200,
+                    overflow: 'auto',
+                  }}
+                >
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      whiteSpace: 'pre-wrap',
+                      color: 'text.secondary',
+                      lineHeight: 1.8,
+                      fontFamily: 'monospace',
+                      fontSize: '0.8rem',
+                    }}
+                  >
+                    {composedPrompt?.overlay || '（暂无动态画像）'}
+                  </Typography>
+                </Box>
+              </Box>
+
+              <Alert severity="info" sx={{ fontSize: '0.75rem' }}>
+                当用户存入新内容并成功加入知识图谱后，系统会自动刷新知识画像。刷新后的画像会拼接到基础提示词后面，帮助
+                Agent 更好地判断何时调用知识图谱检索工具。
+              </Alert>
+            </Stack>
           </AccordionDetails>
         </Accordion>
       </Stack>
