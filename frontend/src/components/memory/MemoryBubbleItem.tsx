@@ -17,6 +17,23 @@ function isRateLimitError(graphError?: string | null) {
   return normalized.includes('rate limit') || normalized.includes('429') || normalized.includes('too many requests')
 }
 
+function parseRetryMeta(graphError?: string | null) {
+  if (!graphError || !graphError.startsWith('__retry__:')) {
+    return null
+  }
+
+  const payload = graphError.slice('__retry__:'.length)
+  const params = new URLSearchParams(payload.replace(/;/g, '&'))
+  const attempt = Number(params.get('attempt'))
+  const max = Number(params.get('max'))
+
+  if (!attempt || !max) {
+    return null
+  }
+
+  return { attempt, max }
+}
+
 export function MemoryBubbleItem({
   memory,
   onSelect,
@@ -26,6 +43,7 @@ export function MemoryBubbleItem({
 }) {
   const title = memory.title?.trim() ? memory.title : '标题生成中...'
   const summary = memory.content.length > 120 ? `${memory.content.slice(0, 120)}...` : memory.content
+  const retryMeta = parseRetryMeta(memory.graph_error)
 
   // 知识图谱状态标识
   const getGraphStatusChip = () => {
@@ -33,7 +51,14 @@ export function MemoryBubbleItem({
       case 'added':
         return <Chip label="已在图谱" size="small" color="success" icon={<CheckCircleIcon />} />
       case 'pending':
-        return <Chip label="处理中" size="small" color="warning" icon={<HourglassEmptyIcon />} />
+        return (
+          <Chip
+            label={retryMeta ? `重试中 ${retryMeta.attempt}/${retryMeta.max}` : '处理中'}
+            size="small"
+            color="warning"
+            icon={<HourglassEmptyIcon />}
+          />
+        )
       case 'failed':
         return (
           <Chip
@@ -53,21 +78,23 @@ export function MemoryBubbleItem({
       <Paper
         onClick={() => onSelect(memory)}
         elevation={0}
-        sx={{
-          ...unifiedCardSx,
-          ...unifiedCardHoverSx,
-          px: 2,
-          py: 1.65,
-          cursor: 'pointer',
-          maxWidth: { xs: '100%', md: '82%' },
-          border: '1px solid',
-          borderColor: memory.graph_status === 'added' ? 'rgba(120, 140, 93, 0.42)' : 'divider',
-          bgcolor: unifiedCardMutedBackground,
-          '&:hover': {
-            borderColor: 'rgba(20, 20, 19, 0.28)',
+        sx={[
+          unifiedCardSx,
+          unifiedCardHoverSx,
+          {
+            px: 2,
+            py: 1.65,
+            cursor: 'pointer',
+            maxWidth: { xs: '100%', md: '82%' },
+            border: '1px solid',
+            borderColor: memory.graph_status === 'added' ? 'rgba(120, 140, 93, 0.42)' : 'divider',
             bgcolor: unifiedCardMutedBackground,
+            '&:hover': {
+              borderColor: 'rgba(20, 20, 19, 0.28)',
+              bgcolor: unifiedCardMutedBackground,
+            },
           },
-        }}
+        ]}
       >
         <Stack spacing={1}>
           <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">

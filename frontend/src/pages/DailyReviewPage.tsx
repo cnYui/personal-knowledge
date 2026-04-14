@@ -1,7 +1,6 @@
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
 import AccessTimeOutlinedIcon from '@mui/icons-material/AccessTimeOutlined'
 import PlaylistAddCheckCircleOutlinedIcon from '@mui/icons-material/PlaylistAddCheckCircleOutlined'
-import SearchIcon from '@mui/icons-material/Search'
 import ScheduleOutlinedIcon from '@mui/icons-material/ScheduleOutlined'
 import {
   Alert,
@@ -13,10 +12,8 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
-  InputAdornment,
   Paper,
   Stack,
-  TextField,
   Typography,
 } from '@mui/material'
 import { useMemo, useState } from 'react'
@@ -57,31 +54,6 @@ function OverviewStrip({
         </Typography>
       </Stack>
     </Paper>
-  )
-}
-
-function DailyReviewFilterBar() {
-  return (
-    <Stack>
-      <TextField
-        fullWidth
-        placeholder="浏览今日推荐内容"
-        value=""
-        inputProps={{ readOnly: true }}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <SearchIcon />
-            </InputAdornment>
-          ),
-        }}
-        sx={{
-          '& .MuiInputBase-root': {
-            bgcolor: '#fffdf8',
-          },
-        }}
-      />
-    </Stack>
   )
 }
 
@@ -130,22 +102,27 @@ function ReviewCard({
       <Paper
         onClick={() => onOpen(item)}
         elevation={0}
-        sx={{
-          ...unifiedCardSx,
-          ...unifiedCardHoverSx,
-          px: 2,
-          py: 1.65,
-          cursor: 'pointer',
-          maxWidth: { xs: '100%', md: '82%' },
-          border: refinementTone ? '1px dashed rgba(217, 119, 87, 0.32)' : '1px solid',
-          borderColor: refinementTone ? 'rgba(217, 119, 87, 0.32)' : item.graph_status === 'added' ? 'rgba(120, 140, 93, 0.42)' : 'divider',
-          bgcolor: unifiedCardMutedBackground,
-          '&:hover': {
-            ...((unifiedCardHoverSx as { '&:hover'?: object })['&:hover'] ?? {}),
-            borderColor: refinementTone ? 'rgba(217, 119, 87, 0.46)' : 'rgba(20, 20, 19, 0.28)',
+        sx={[
+          unifiedCardSx,
+          unifiedCardHoverSx,
+          {
+            px: 2,
+            py: 1.65,
+            cursor: 'pointer',
+            maxWidth: { xs: '100%', md: '82%' },
+            border: refinementTone ? '1px dashed rgba(217, 119, 87, 0.32)' : '1px solid',
+            borderColor: refinementTone
+              ? 'rgba(217, 119, 87, 0.32)'
+              : item.graph_status === 'added'
+                ? 'rgba(120, 140, 93, 0.42)'
+                : 'divider',
             bgcolor: unifiedCardMutedBackground,
+            '&:hover': {
+              borderColor: refinementTone ? 'rgba(217, 119, 87, 0.46)' : 'rgba(20, 20, 19, 0.28)',
+              bgcolor: unifiedCardMutedBackground,
+            },
           },
-        }}
+        ]}
       >
         <Stack spacing={1}>
           <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
@@ -288,8 +265,6 @@ export function DailyReviewPage() {
     <Box sx={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', pr: 1 }}>
         <Stack spacing={3}>
-          <DailyReviewFilterBar />
-
           <OverviewStrip
             recommendedCount={data.overview.recommended_count}
             recentCount={data.overview.recent_memory_count}

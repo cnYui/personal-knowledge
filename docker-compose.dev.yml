@@ -1,0 +1,20 @@
+services:
+  backend:
+    volumes:
+      - ./backend:/app
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    image: node:20-alpine
+    container_name: pkb-frontend-dev
+    working_dir: /app
+    depends_on:
+      backend:
+        condition: service_started
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "${FRONTEND_DEV_PORT:-5174}:5173"

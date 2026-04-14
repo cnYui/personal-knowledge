@@ -1,6 +1,7 @@
-import { SxProps, Theme } from '@mui/material'
+import { Theme } from '@mui/material'
+import { SystemStyleObject } from '@mui/system'
 
-export const unifiedCardSx: SxProps<Theme> = {
+export const unifiedCardSx: SystemStyleObject<Theme> = {
   borderRadius: 0.9,
   border: '1px solid',
   borderColor: 'divider',
@@ -9,7 +10,7 @@ export const unifiedCardSx: SxProps<Theme> = {
   backgroundImage: 'none',
 }
 
-export const unifiedCardHoverSx: SxProps<Theme> = {
+export const unifiedCardHoverSx: SystemStyleObject<Theme> = {
   transition: 'transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease, background-color 180ms ease',
   '&:hover': {
     transform: 'translateY(-2px)',

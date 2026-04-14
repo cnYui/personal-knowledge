@@ -42,155 +42,197 @@ docs/       设计文档与实现方案
 
 建议本机先准备好以下环境：
 
-- Node.js 18+
+- Node.js 20+
 - Python 3.12+
-- Docker Desktop（用于 PostgreSQL 和 Neo4j）
+- Docker Desktop
 
-如果你要启用知识图谱和 Agentic RAG 相关功能，建议同时启动：
-
-- PostgreSQL
-- Neo4j
-- 对应的大模型 / OpenAI 兼容 API Key
+如果你要启用知识图谱和 Agentic RAG 相关功能，还需要准备可用的大模型 / OpenAI 兼容 API Key。
 
 ## 环境变量
 
-### 前端
+### 根目录 `.env`
 
-根目录的 `.env.example` 提供了前端侧常用变量示例：
-
-```env
-VITE_API_BASE_URL=http://localhost:8000
-```
-
-前端默认会请求 `http://localhost:8000` 的后端接口。
-
-### 后端
-
-后端环境变量建议参考：
-
-- `backend/.env.example`
-- 本地实际运行可使用 `backend/.env`
-
-一个最小可运行示例：
-
-```env
-DATABASE_URL=postgresql+psycopg://pkb_user:pkb_password@localhost:5432/personal_knowledge_base
-UPLOAD_DIR=backend/uploads/images
-OCR_ENABLED=true
-MULTIMODAL_PROVIDER=mock
-MULTIMODAL_API_KEY=
-KNOWLEDGE_GRAPH_BASE_URL=http://localhost:8001
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=your_password_here
-DIALOG_PROVIDER=deepseek
-DIALOG_BASE_URL=https://api.deepseek.com/v1
-DIALOG_MODEL=deepseek-chat
-DIALOG_API_KEY=your-api-key
-KNOWLEDGE_BUILD_PROVIDER=deepseek
-KNOWLEDGE_BUILD_BASE_URL=https://api.deepseek.com/v1
-KNOWLEDGE_BUILD_MODEL=deepseek-chat
-KNOWLEDGE_BUILD_API_KEY=your-api-key
-```
-
-## 前后端启动方式
-
-### 1. 启动基础依赖
-
-如果你希望项目完整运行，先在项目根目录启动 PostgreSQL 和 Neo4j：
+项目根目录的 `.env.example` 提供了 Docker Compose 级别的统一变量模板。首次启动前，建议复制一份：
 
 ```bash
-docker compose up -d
+cp .env.example .env
 ```
 
-启动后默认端口如下：
+Windows 可直接运行：
 
-- PostgreSQL：`5432`
-- Neo4j Browser：`7474`
-- Neo4j Bolt：`7687`
+```bat
+copy .env.example .env
+```
 
-查看容器状态：
+根目录 `.env` 主要负责：
+
+- Docker 端口映射
+- PostgreSQL / Neo4j 默认账号密码
+- 前端构建时注入的 `VITE_API_BASE_URL`
+- 后端容器运行时使用的数据库、图谱、模型配置
+
+### 后端 `backend/.env.example`
+
+`backend/.env.example` 保留了后端单独运行时的参考配置，适合不使用 Docker、直接在本机 Python 环境启动后端时参考。
+
+换句话说：
+
+- `/.env.example`：给 Docker Compose / 一键启动脚本用
+- `backend/.env.example`：给纯后端本地运行用
+
+如果你在 Docker 模式下运行，一般只需要维护根目录 `.env`。
+
+## Docker 启动方式
+
+### 1. 部署模式（默认，适合别人拉下来直接跑）
+
+默认 `docker-compose.yml` 会启动：
+
+- `postgres`
+- `neo4j`
+- `backend`
+- `frontend`
+
+首次启动：
+
+```bash
+docker compose up -d --build
+```
+
+查看状态：
 
 ```bash
 docker compose ps
 ```
 
-### 2. 启动后端
+查看后端日志：
 
-进入后端目录：
+```bash
+docker compose logs -f backend
+```
+
+停止服务：
+
+```bash
+docker compose down
+```
+
+连同数据卷一起删除：
+
+```bash
+docker compose down -v
+```
+
+> 注意：`docker compose down -v` 会清空 PostgreSQL 和 Neo4j 的持久化数据。
+
+### 2. 开发模式（前后端热更新）
+
+开发模式在默认 Compose 基础上叠加 `docker-compose.dev.yml`，让：
+
+- 后端使用挂载目录 + `uvicorn --reload`
+- 前端使用 Node 容器运行 `npm run dev`
+
+启动命令：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+此模式下：
+
+- 前端代码修改可热更新
+- 后端 Python 代码修改可自动重载
+- PostgreSQL / Neo4j 仍由同一套基础服务提供
+- 由于 Compose 叠加时 `ports` 会追加而不是替换，开发模式前端额外暴露在 `http://localhost:5174`
+
+## 一键启动脚本
+
+仓库根目录提供了两个快捷脚本：
+
+- `start.bat`：Windows
+- `start.sh`：macOS / Linux
+
+它们会在 `.env` 不存在时自动从 `.env.example` 复制，然后执行：
+
+```bash
+docker compose up -d --build
+```
+
+使用方式：
+
+### Windows
+
+```bat
+start.bat
+```
+
+### macOS / Linux
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+## 默认访问地址
+
+```text
+前端: http://localhost:5173
+开发模式前端: http://localhost:5174
+后端健康检查: http://localhost:8000/health
+Neo4j Browser: http://localhost:7474
+PostgreSQL: localhost:5432
+```
+
+## 数据持久化说明
+
+Docker 默认使用如下 volumes 持久化数据：
+
+- `postgres_data`
+- `neo4j_data`
+- `neo4j_logs`
+
+这意味着：
+
+- 正常执行 `docker compose down` 不会删除数据库数据
+- 只有执行 `docker compose down -v` 才会清空这些持久化卷
+
+## 非 Docker 本地启动方式
+
+如果你更习惯直接在本机运行前后端，也可以继续使用传统方式。
+
+### 启动基础依赖
+
+```bash
+docker compose up -d postgres neo4j
+```
+
+### 启动后端
 
 ```bash
 cd backend
-```
-
-安装依赖：
-
-```bash
 pip install -r requirements.txt
-```
-
-设置 Python 路径：
-
-```bash
-$env:PYTHONPATH = (Get-Location).Path
-```
-
-使用 uvicorn 启动：
-
-```bash
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-推荐说明：
+说明：
 
 - 真实应用入口是 `backend/app/main.py`
-- `backend/start.py` 现在只是一个兼容包装，本质上仍然会启动 `uvicorn app.main:app`
-- 不再推荐使用 SQLite 作为运行时数据库
+- `backend/start.py` 是兼容包装，内部仍启动 `uvicorn app.main:app`
+- 运行时数据库默认应使用 PostgreSQL，不再推荐 SQLite
 
-后端默认访问地址：
-
-- API 根地址：`http://localhost:8000`
-- 健康检查：`http://localhost:8000/health`
-
-### 3. 启动前端
-
-打开另一个终端，进入前端目录：
+### 启动前端
 
 ```bash
 cd frontend
-```
-
-安装依赖：
-
-```bash
 npm install
-```
-
-启动开发服务器：
-
-```bash
 npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-如需局域网访问，可使用：
+如需局域网访问：
 
 ```bash
 npm run dev -- --host 0.0.0.0
 ```
-
-前端默认访问地址：
-
-```text
-http://localhost:5173
-```
-
-## 推荐启动顺序
-
-为了减少报错，建议按照下面顺序启动：
-
-1. 在项目根目录执行 `docker compose up -d`
-2. 在 `backend/` 中执行 `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`
-3. 在 `frontend/` 中执行 `npm run dev -- --host 127.0.0.1 --port 5173`
 
 ## 项目主要功能
 
@@ -217,6 +259,12 @@ http://localhost:5173
 - 基于已有记忆做聊天问答
 - 支持 RAG 检索增强
 - 结合图谱结果提升上下文关联能力
+
+### 每日回顾
+
+- 提供“今日推荐回顾 / 最近主题聚焦 / 最近已沉淀进知识图谱 / 待继续整理”等分区
+- 适合用于快速回看当天最值得复习的记忆与最近持续出现的主题
+- 支持查看推荐条目的详情内容与时间信息
 
 ### 浏览器插件
 
@@ -250,6 +298,17 @@ pytest tests -v
 python -m pytest backend/tests -v
 ```
 
+### Docker
+
+```bash
+docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+docker compose ps
+docker compose logs -f backend
+docker compose down
+docker compose down -v
+```
+
 ## 常见问题
 
 ### 1. 前端打开后没有数据
@@ -267,6 +326,7 @@ python -m pytest backend/tests -v
 - `DATABASE_URL` 配置是否正确
 - PostgreSQL 容器是否已经启动
 - `pkb-postgres` 是否监听 `5432`
+- 如果你修改过数据库用户名或密码，记得同步更新根目录 `.env`
 
 ### 3. 知识图谱功能不可用
 
@@ -275,6 +335,37 @@ python -m pytest backend/tests -v
 - Neo4j 是否运行在 `7687`
 - `NEO4J_URI`、用户名和密码是否正确
 - 模型 API Key 是否已经配置
+
+### 4. Docker 模式下 backend 启动失败
+
+优先检查：
+
+- `docker compose logs -f backend`
+- 根目录 `.env` 中的数据库、Neo4j、模型配置是否完整
+- PostgreSQL 与 Neo4j 是否已先成功启动
+
+### 5. 开发模式前端访问地址不对
+
+如果你使用的是：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+请优先访问：
+
+- `http://localhost:5174`：Vite 开发服务器
+- `http://localhost:5173`：基础 Compose 中的 Nginx 前端容器映射
+
+### 6. 模型能力不可用
+
+如果 `DIALOG_API_KEY` / `KNOWLEDGE_BUILD_API_KEY` 未配置，应用中的依赖模型能力的功能可能无法正常工作，例如：
+
+- 标题生成
+- 图谱构建
+- 部分聊天 / RAG 相关能力
+
+但不依赖模型的基础页面、容器启动、数据库连接和部分本地功能仍可验证。
 
 ## 补充说明
 

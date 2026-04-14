@@ -19,3 +19,5 @@ frontend/*.log
 frontend/tsconfig.tsbuildinfo
 frontend/tsconfig.node.tsbuildinfo
 *.pid
+backend/test_graph_retrieval.db
+test_graph_retrieval.db
