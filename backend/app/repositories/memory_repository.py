@@ -31,6 +31,27 @@ class MemoryRepository:
     def get(self, db: Session, memory_id: str) -> Memory | None:
         return db.get(Memory, memory_id)
 
+    def list_entity_memory_ids(self, db: Session, keyword: str) -> list[str]:
+        pattern = f'%{keyword}%'
+        query = (
+            select(Memory.id)
+            .where(or_(Memory.title.ilike(pattern), Memory.content.ilike(pattern)))
+            .order_by(Memory.updated_at.desc(), Memory.created_at.desc(), Memory.id.asc())
+        )
+        return list(db.scalars(query))
+
+    def list_entity_memory_refs(self, db: Session, keyword: str, limit: int | None = 20) -> list[dict]:
+        pattern = f'%{keyword}%'
+        query = (
+            select(Memory.id, Memory.title)
+            .where(or_(Memory.title.ilike(pattern), Memory.content.ilike(pattern)))
+            .order_by(Memory.updated_at.desc(), Memory.created_at.desc(), Memory.id.asc())
+        )
+        if limit is not None:
+            query = query.limit(limit)
+        rows = db.execute(query)
+        return [dict(item._mapping) for item in rows]
+
     def update(self, db: Session, memory: Memory, payload: MemoryUpdate) -> Memory:
         for key, value in payload.model_dump(exclude_none=True).items():
             setattr(memory, key, value)
