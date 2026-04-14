@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.services.agent_tools.graph_history_tool import GraphHistoryTool
 from app.services.agent_tools.graph_retrieval_tool import GraphRetrievalTool
 from app.services.knowledge_graph_service import KnowledgeGraphService
 from app.workflow.canvas import Canvas
@@ -20,12 +21,14 @@ class CanvasFactory:
         *,
         knowledge_graph_service: KnowledgeGraphService | None = None,
         graph_retrieval_tool: GraphRetrievalTool | None = None,
+        graph_history_tool: GraphHistoryTool | None = None,
     ) -> None:
         shared_knowledge_graph_service = knowledge_graph_service or getattr(
             graph_retrieval_tool, 'knowledge_graph_service', None
         )
         self.knowledge_graph_service = shared_knowledge_graph_service
         self.graph_retrieval_tool = graph_retrieval_tool
+        self.graph_history_tool = graph_history_tool
 
     def _get_knowledge_graph_service(self) -> KnowledgeGraphService:
         if self.knowledge_graph_service is None:
@@ -38,6 +41,11 @@ class CanvasFactory:
                 knowledge_graph_service=self._get_knowledge_graph_service()
             )
         return self.graph_retrieval_tool
+
+    def _get_graph_history_tool(self) -> GraphHistoryTool:
+        if self.graph_history_tool is None:
+            self.graph_history_tool = GraphHistoryTool()
+        return self.graph_history_tool
 
     def _load_template(self, template_name: str) -> WorkflowDSL:
         template_path = TEMPLATE_DIR / template_name
@@ -66,6 +74,7 @@ class CanvasFactory:
         canvas = Canvas(dsl, context=context)
         knowledge_graph_service = self._get_knowledge_graph_service()
         graph_retrieval_tool = self._get_graph_retrieval_tool()
+        graph_history_tool = self._get_graph_history_tool()
         canvas.register_node_type('begin', lambda spec: BeginNode(spec))
         canvas.register_node_type(
             'retrieval',
@@ -77,6 +86,7 @@ class CanvasFactory:
                 spec,
                 knowledge_graph_service=knowledge_graph_service,
                 graph_retrieval_tool=graph_retrieval_tool,
+                graph_history_tool=graph_history_tool,
             ),
         )
         canvas.register_node_type('message', lambda spec: MessageNode(spec))
