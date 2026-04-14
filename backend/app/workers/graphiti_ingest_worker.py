@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 from graphiti_core.llm_client.errors import RateLimitError
 
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 MAX_CHUNK_RETRIES = 3
 INITIAL_RETRY_DELAY_SECONDS = 2
-GRAPH_BUILD_TIMEOUT_SECONDS = 90
+GRAPH_BUILD_TIMEOUT_SECONDS = 180
 MAX_CHUNK_SPLIT_DEPTH = 1
 MIN_CHUNK_LENGTH_FOR_BISECTION = 800
 
@@ -208,11 +209,14 @@ class GraphitiIngestWorker:
                 if is_rate_limited:
                     delay_seconds = INITIAL_RETRY_DELAY_SECONDS * (2 ** attempt)
                     retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
-                    memory.graph_error = (
-                        f'__retry__:attempt={attempt + 1};max={MAX_CHUNK_RETRIES};'
-                        f'retry_at={retry_at.isoformat()}'
+                    self._record_retry_progress(
+                        db=db,
+                        memory=memory,
+                        attempt=attempt + 1,
+                        title=title,
+                        error=error,
+                        retry_at=retry_at,
                     )
-                    db.commit()
 
                     logger.warning(
                         '知识图谱构建限流: memory_id=%s, attempt=%s/%s, %ss 后自动重试',
@@ -224,6 +228,13 @@ class GraphitiIngestWorker:
                     await asyncio.sleep(delay_seconds)
                     continue
 
+                self._record_retry_progress(
+                    db=db,
+                    memory=memory,
+                    attempt=attempt + 1,
+                    title=title,
+                    error=error,
+                )
                 logger.warning(
                     '知识图谱构建重试: memory_id=%s, title=%s, attempt=%s/%s, error=%s',
                     memory.id,
@@ -268,6 +279,27 @@ class GraphitiIngestWorker:
                 return left + 1
 
         return midpoint
+
+    def _record_retry_progress(
+        self,
+        *,
+        db,
+        memory,
+        attempt: int,
+        title: str,
+        error: Exception,
+        retry_at: datetime | None = None,
+    ) -> None:
+        retry_at = retry_at or datetime.now(timezone.utc)
+        error_message = str(error).strip() or error.__class__.__name__
+        memory.graph_status = 'pending'
+        memory.graph_error = (
+            f'__retry__:attempt={attempt};max={MAX_CHUNK_RETRIES};'
+            f'retry_at={retry_at.isoformat()};'
+            f'title={quote(title, safe="")};'
+            f'error={quote(error_message, safe="")}'
+        )
+        db.commit()
 
     def _is_rate_limited_error(self, error: Exception) -> bool:
         """Detect whether an error is caused by API rate limiting."""

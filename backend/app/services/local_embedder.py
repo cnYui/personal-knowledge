@@ -41,6 +41,7 @@ class LocalEmbedder(EmbedderClient):
             from sentence_transformers import SentenceTransformer
             logger.info(f'Loading local embedding model: {config.model_name}')
             self.model = SentenceTransformer(config.model_name)
+            self._sync_embedding_dimension_with_model()
             logger.info('Local embedding model loaded successfully')
         except ImportError:
             logger.warning(
@@ -48,6 +49,24 @@ class LocalEmbedder(EmbedderClient):
                 'hash-based embeddings for local startup'
             )
             self._use_fallback = True
+
+    def _sync_embedding_dimension_with_model(self) -> None:
+        """Align configured embedding dimension with the loaded model's real output size."""
+        if self.model is None:
+            return
+
+        detected_dimension = None
+        get_dimension = getattr(self.model, 'get_sentence_embedding_dimension', None)
+
+        if callable(get_dimension):
+            detected_dimension = get_dimension()
+
+        if not detected_dimension:
+            probe_embedding = self.model.encode('dimension probe', convert_to_numpy=True)
+            detected_dimension = len(probe_embedding.tolist())
+
+        self.config = self.config.model_copy(update={'embedding_dim': int(detected_dimension)})
+        logger.info('Aligned local embedding dimension to model output: %s', self.config.embedding_dim)
 
     def _fallback_embedding(self, text: str) -> list[float]:
         """Generate a deterministic placeholder embedding when the model is unavailable."""
@@ -88,10 +107,8 @@ class LocalEmbedder(EmbedderClient):
             return self._fallback_embedding(text)
 
         embedding = self.model.encode(text, convert_to_numpy=True)
-        
-        # Convert to list and truncate to configured dimension
-        embedding_list = embedding.tolist()
-        return embedding_list[: self.config.embedding_dim]
+
+        return embedding.tolist()
 
     async def create_batch(self, input_data_list: list[str]) -> list[list[float]]:
         """
@@ -108,9 +125,5 @@ class LocalEmbedder(EmbedderClient):
             return [self._fallback_embedding(text) for text in input_data_list]
 
         embeddings = self.model.encode(input_data_list, convert_to_numpy=True)
-        
-        # Convert to list and truncate to configured dimension
-        return [
-            embedding.tolist()[: self.config.embedding_dim]
-            for embedding in embeddings
-        ]
+
+        return [embedding.tolist() for embedding in embeddings]

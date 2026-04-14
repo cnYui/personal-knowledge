@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app import dependencies
+from app.dependencies import get_worker
 
 
 @pytest.fixture
@@ -16,10 +16,12 @@ def mock_worker():
 
 
 @pytest.fixture
-def client_with_worker(mock_worker, monkeypatch):
+def client_with_worker(mock_worker, setup_database, override_dependencies):
     """Create test client with mocked worker."""
-    monkeypatch.setattr('app.dependencies.graphiti_worker', mock_worker)
-    return TestClient(app)
+    app.dependency_overrides[get_worker] = lambda: mock_worker
+    with TestClient(app) as client:
+        yield client
+    app.dependency_overrides.pop(get_worker, None)
 
 
 def test_add_memory_to_graph(client_with_worker, mock_worker):

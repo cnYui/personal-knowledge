@@ -5,7 +5,7 @@ from app.workflow.nodes.begin_node import BeginNode
 from app.workflow.runtime_context import RuntimeContext
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_begin_node_exposes_runtime_inputs():
     node = BeginNode(WorkflowNodeSpec(id='begin', type='begin'))
     context = RuntimeContext(query='hello', history=[{'role': 'user', 'content': 'hi'}], files=['f1'], user_id='u1')

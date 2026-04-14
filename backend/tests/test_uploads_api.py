@@ -4,16 +4,15 @@ from app.main import app
 
 
 def test_upload_memory_with_image_returns_created():
-    client = TestClient(app)
-
-    response = client.post(
-        "/api/uploads/memories",
-        data={
-            "content": "A graph with nodes and edges.",
-            "group_id": "default",
-        },
-        files={"images": ("note.png", b"fake-image-bytes", "image/png")},
-    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/uploads/memories",
+            data={
+                "content": "A graph with nodes and edges.",
+                "group_id": "default",
+            },
+            files={"images": ("note.png", b"fake-image-bytes", "image/png")},
+        )
 
     assert response.status_code == 201
     body = response.json()

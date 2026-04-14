@@ -46,7 +46,7 @@ class FakeLLMClient:
         )()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_node_can_answer_greeting_without_retrieval():
     class FailingGraphRetrievalTool:
         async def run(self, query: str, group_id: str = 'default'):
@@ -77,7 +77,7 @@ async def test_agent_node_can_answer_greeting_without_retrieval():
     assert '[overlay]' in first_call['messages'][0]['content']
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_node_uses_tool_loop_and_reference_store_for_grounded_answer():
     references = [ChatReference(type='relationship', fact='Alice likes green tea')]
     retrieval_result = GraphRetrievalResult(
@@ -130,7 +130,7 @@ async def test_agent_node_uses_tool_loop_and_reference_store_for_grounded_answer
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_node_prefixes_general_fallback_when_evidence_is_insufficient():
     references = [ChatReference(type='entity', name='Alice', summary='用户的朋友')]
     retrieval_result = GraphRetrievalResult(
@@ -177,7 +177,7 @@ async def test_agent_node_prefixes_general_fallback_when_evidence_is_insufficien
     assert result['agent_trace'].steps[-1].step_type == 'fallback'
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_node_can_call_retrieval_tool_multiple_rounds():
     query_to_result = {
         '星期一收集什么垃圾？': GraphRetrievalResult(
@@ -242,7 +242,7 @@ async def test_agent_node_can_call_retrieval_tool_multiple_rounds():
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_node_can_still_ground_answer_after_max_rounds_with_evidence():
     references = [ChatReference(type='relationship', fact='向量空间是线性代数中的基本结构')]
     retrieval_result = GraphRetrievalResult(

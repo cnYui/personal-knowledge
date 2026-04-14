@@ -1,7 +1,9 @@
 from unittest.mock import AsyncMock, Mock, patch
+from urllib.parse import parse_qs
 
 import pytest
 
+from app.core.model_errors import ModelAPIError
 from app.workers.graphiti_ingest_worker import GraphitiIngestWorker
 
 
@@ -102,6 +104,47 @@ async def test_process_memory_failure(mock_session_local, mock_graphiti_client):
 @pytest.mark.anyio
 @patch('app.workers.graphiti_ingest_worker.GraphitiClient')
 @patch('app.workers.graphiti_ingest_worker.SessionLocal')
+async def test_process_memory_failure_preserves_graph_dimension_mismatch_message(mock_session_local, mock_graphiti_client):
+    mock_db = Mock()
+    mock_session_local.return_value = mock_db
+
+    mock_memory = Mock()
+    mock_memory.id = 'test-memory-123'
+    mock_memory.title = 'Test Memory'
+    mock_memory.content = 'Test content'
+    mock_memory.group_id = 'default'
+    mock_memory.created_at = Mock()
+
+    mock_repository = Mock()
+    mock_repository.get.return_value = mock_memory
+
+    mock_client_instance = Mock()
+    mock_client_instance.add_memory_in_chunks = AsyncMock(
+        side_effect=ModelAPIError(
+            error_code='GRAPH_VECTOR_DIMENSION_MISMATCH',
+            message='知识图谱向量维度不一致，请清理旧图谱数据后重新入库。',
+            status_code=500,
+            details='The supplied vectors do not have the same number of dimensions.',
+            provider='deepseek',
+            retryable=False,
+        )
+    )
+    mock_graphiti_client.return_value = mock_client_instance
+
+    worker = GraphitiIngestWorker()
+    worker.repository = mock_repository
+
+    await worker._process_memory('test-memory-123')
+
+    assert mock_memory.graph_status == 'failed'
+    assert mock_memory.graph_error == '知识图谱向量维度不一致，请清理旧图谱数据后重新入库。'
+    mock_db.commit.assert_called()
+    mock_db.close.assert_called_once()
+
+
+@pytest.mark.anyio
+@patch('app.workers.graphiti_ingest_worker.GraphitiClient')
+@patch('app.workers.graphiti_ingest_worker.SessionLocal')
 async def test_process_memory_not_found(mock_session_local, mock_graphiti_client):
     mock_db = Mock()
     mock_session_local.return_value = mock_db
@@ -180,6 +223,33 @@ async def test_add_memory_episode_with_retry_retries_same_chunk_before_succeedin
 
     assert episode_uuids == ['episode-uuid-789']
     assert mock_client_instance.add_memory_episode.await_count == 3
+    assert memory.graph_error.startswith('__retry__:attempt=2;max=3;')
+    retry_payload = memory.graph_error.removeprefix('__retry__:').replace(';', '&')
+    retry_params = parse_qs(retry_payload)
+    assert retry_params['title'] == ['重试标题']
+    assert retry_params['error'] == ['temporary-2']
+    assert db.commit.call_count >= 2
+
+
+@patch('app.workers.graphiti_ingest_worker.GraphitiClient')
+def test_record_retry_progress_marks_memory_pending(mock_graphiti_client):
+    worker = GraphitiIngestWorker()
+    memory = Mock()
+    memory.graph_status = 'added'
+    memory.graph_error = None
+    db = Mock()
+
+    worker._record_retry_progress(
+        db=db,
+        memory=memory,
+        attempt=1,
+        title='重试标题',
+        error=TimeoutError(),
+    )
+
+    assert memory.graph_status == 'pending'
+    assert memory.graph_error.startswith('__retry__:attempt=1;max=3;')
+    db.commit.assert_called_once()
 
 
 @pytest.mark.anyio

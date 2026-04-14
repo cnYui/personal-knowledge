@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from graphiti_core.edges import EntityEdge
+from graphiti_core.errors import GroupsEdgesNotFoundError
 from graphiti_core.nodes import EntityNode
 from openai import AsyncOpenAI
 
@@ -146,6 +147,11 @@ class AgentKnowledgeProfileRefreshService:
         finally:
             db.close()
 
+        graph_group_ids = self._dedupe_preserve_order(
+            [str(getattr(memory, 'group_id', '') or '').strip() for memory in recent_memories],
+            limit=RECENT_MEMORY_LIMIT,
+        ) or ['default']
+
         recent_titles = [memory.title for memory in recent_memories if getattr(memory, 'title', None)]
         recent_entities_counter: Counter[str] = Counter()
         for memory in recent_memories:
@@ -160,7 +166,7 @@ class AgentKnowledgeProfileRefreshService:
             client = self.graphiti_client.client
             if client is not None:
                 driver = client.driver
-                edges = await EntityEdge.get_by_group_ids(driver, ['default'], limit=MAX_GRAPH_EDGE_SAMPLE)
+                edges = await EntityEdge.get_by_group_ids(driver, graph_group_ids, limit=MAX_GRAPH_EDGE_SAMPLE)
                 node_uuids = {
                     uuid
                     for edge in edges
@@ -176,6 +182,11 @@ class AgentKnowledgeProfileRefreshService:
                     relation = getattr(edge, 'name', None) or getattr(edge, 'fact', None)
                     if relation:
                         top_relations_counter[str(relation)] += 1
+        except GroupsEdgesNotFoundError:
+            logger.debug(
+                'No graph edges found for knowledge profile refresh group_ids=%s; falling back to memory-only data.',
+                graph_group_ids,
+            )
         except Exception:
             logger.warning('Failed to extract graph candidates for knowledge profile; falling back to memory-only data.', exc_info=True)
 

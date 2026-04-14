@@ -39,7 +39,6 @@ def test_graph_retrieval_result_defaults():
     assert result.group_id == 'default'
 
 
-@pytest.mark.asyncio
 @pytest.mark.anyio
 async def test_retrieve_graph_context_returns_structured_result(monkeypatch):
     edge = SimpleNamespace(
@@ -62,7 +61,6 @@ async def test_retrieve_graph_context_returns_structured_result(monkeypatch):
     assert len(result.references) == 3
 
 
-@pytest.mark.asyncio
 @pytest.mark.anyio
 async def test_retrieve_graph_context_filters_out_non_latest_episode_edges(db_session):
     latest_memory = Memory(title='Latest', title_status='ready', content='Body', group_id='default')
@@ -119,7 +117,6 @@ async def test_retrieve_graph_context_filters_out_non_latest_episode_edges(db_se
     assert 'Old fact' not in result.context
 
 
-@pytest.mark.asyncio
 @pytest.mark.anyio
 async def test_retrieve_graph_context_returns_empty_when_only_history_matches(db_session):
     memory = Memory(title='Old', title_status='ready', content='Body', group_id='default')
@@ -157,7 +154,6 @@ async def test_retrieve_graph_context_returns_empty_when_only_history_matches(db
     assert result.context == ''
 
 
-@pytest.mark.asyncio
 @pytest.mark.anyio
 async def test_answer_with_context_uses_retrieval_context_and_returns_references(monkeypatch):
     service = KnowledgeGraphService.__new__(KnowledgeGraphService)
@@ -198,7 +194,6 @@ async def test_answer_with_context_uses_retrieval_context_and_returns_references
     assert 'Alice 喜欢什么？' in captured['messages'][1]['content']
 
 
-@pytest.mark.asyncio
 @pytest.mark.anyio
 async def test_ask_reuses_retrieval_and_answer_methods(monkeypatch):
     service = KnowledgeGraphService.__new__(KnowledgeGraphService)
@@ -233,7 +228,6 @@ async def test_ask_reuses_retrieval_and_answer_methods(monkeypatch):
     ]
 
 
-@pytest.mark.asyncio
 @pytest.mark.anyio
 async def test_ask_preserves_references_when_answer_generation_fails(monkeypatch):
     service = KnowledgeGraphService.__new__(KnowledgeGraphService)
@@ -262,7 +256,6 @@ async def test_ask_preserves_references_when_answer_generation_fails(monkeypatch
     }
 
 
-@pytest.mark.asyncio
 @pytest.mark.anyio
 async def test_graph_retrieval_tool_delegates_to_service():
     expected = GraphRetrievalResult(

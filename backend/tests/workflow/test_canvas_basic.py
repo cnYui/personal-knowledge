@@ -22,7 +22,7 @@ class EndNode:
         return {'message': 'end'}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_canvas_runs_registered_nodes_in_order():
     dsl = {
         'entry_node_id': 'begin',

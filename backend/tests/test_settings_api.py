@@ -2,7 +2,13 @@ from fastapi.testclient import TestClient
 
 import app.routers.settings as settings_router
 from app.main import app
-from app.schemas.settings import ModelConfigRead, ModelConfigUpdate, RuntimeModelConfigStatus, ApiKeyFieldStatus
+from app.schemas.settings import (
+    AgentKnowledgeProfileRead,
+    ApiKeyFieldStatus,
+    ModelConfigRead,
+    ModelConfigUpdate,
+    RuntimeModelConfigStatus,
+)
 
 
 def _build_response(dialog_mask: str, build_mask: str) -> ModelConfigRead:
@@ -19,6 +25,17 @@ def _build_response(dialog_mask: str, build_mask: str) -> ModelConfigRead:
             model='deepseek-chat',
             api_key=ApiKeyFieldStatus(configured=bool(build_mask), masked_value=build_mask),
         ),
+        knowledge_profile=AgentKnowledgeProfileRead(
+            available=False,
+            status='missing',
+            major_topics=[],
+            high_frequency_entities=[],
+            high_frequency_relations=[],
+            recent_focuses=[],
+            rendered_overlay='',
+            updated_at=None,
+            error_message=None,
+        ),
     )
 
 
@@ -27,9 +44,9 @@ def test_get_model_config_returns_masked_runtime_config(monkeypatch):
         return _build_response('dial****1234', 'buil****5678')
 
     monkeypatch.setattr(settings_router.model_config_service, 'get_masked_config', fake_get_masked_config)
-    client = TestClient(app)
-
-    response = client.get('/api/settings/model-config')
+    monkeypatch.setattr(settings_router.agent_knowledge_profile_service, 'get_latest_snapshot', lambda: None)
+    with TestClient(app) as client:
+        response = client.get('/api/settings/model-config')
 
     assert response.status_code == 200
     assert response.json() == {
@@ -45,26 +62,39 @@ def test_get_model_config_returns_masked_runtime_config(monkeypatch):
             'model': 'deepseek-chat',
             'api_key': {'configured': True, 'masked_value': 'buil****5678'},
         },
+        'knowledge_profile': {
+            'available': False,
+            'status': 'missing',
+            'major_topics': [],
+            'high_frequency_entities': [],
+            'high_frequency_relations': [],
+            'recent_focuses': [],
+            'rendered_overlay': '',
+            'updated_at': None,
+            'error_message': None,
+        },
     }
 
 
 def test_put_model_config_updates_and_returns_masked_runtime_config(monkeypatch):
     call_log = []
+    expected_response = _build_response('dial****4321', 'buil****8765')
 
     def fake_update_config(payload: ModelConfigUpdate):
         call_log.append(payload)
-        return _build_response('dial****4321', 'buil****8765')
+        return expected_response
 
     monkeypatch.setattr(settings_router.model_config_service, 'update_config', fake_update_config)
-    client = TestClient(app)
-
-    response = client.put(
-        '/api/settings/model-config',
-        json={
-            'dialog_api_key': 'dialog-secret-4321',
-            'knowledge_build_api_key': 'build-secret-8765',
-        },
-    )
+    monkeypatch.setattr(settings_router.model_config_service, 'get_masked_config', lambda: expected_response)
+    monkeypatch.setattr(settings_router.agent_knowledge_profile_service, 'get_latest_snapshot', lambda: None)
+    with TestClient(app) as client:
+        response = client.put(
+            '/api/settings/model-config',
+            json={
+                'dialog_api_key': 'dialog-secret-4321',
+                'knowledge_build_api_key': 'build-secret-8765',
+            },
+        )
 
     assert response.status_code == 200
     assert call_log == [
@@ -75,3 +105,4 @@ def test_put_model_config_updates_and_returns_masked_runtime_config(monkeypatch)
     ]
     assert response.json()['dialog']['api_key']['masked_value'] == 'dial****4321'
     assert response.json()['knowledge_build']['api_key']['masked_value'] == 'buil****8765'
+    assert response.json()['knowledge_profile']['status'] == 'missing'

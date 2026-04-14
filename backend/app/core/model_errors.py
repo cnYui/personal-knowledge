@@ -37,6 +37,13 @@ def missing_api_key_error(*, provider: str, purpose: str) -> ModelAPIError:
     )
 
 
+def _is_graph_vector_dimension_mismatch(normalized: str) -> bool:
+    return (
+        'vector.similarity.cosine' in normalized
+        and 'same number of dimensions' in normalized
+    ) or ('vector dimension' in normalized and 'mismatch' in normalized)
+
+
 def map_model_api_error(error: Exception, *, provider: str) -> ModelAPIError:
     if isinstance(error, ModelAPIError):
         return error
@@ -44,6 +51,16 @@ def map_model_api_error(error: Exception, *, provider: str) -> ModelAPIError:
     status_code = getattr(error, 'status_code', None) or getattr(error, 'http_status', None)
     details = str(error)
     normalized = details.lower()
+
+    if _is_graph_vector_dimension_mismatch(normalized):
+        return ModelAPIError(
+            error_code='GRAPH_VECTOR_DIMENSION_MISMATCH',
+            message='知识图谱向量维度不一致，请清理旧图谱数据后重新入库。',
+            status_code=500,
+            details=details,
+            provider=provider,
+            retryable=False,
+        )
 
     if status_code == 402 or '402' in normalized or 'insufficient' in normalized or 'quota' in normalized:
         return ModelAPIError(

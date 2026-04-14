@@ -38,6 +38,7 @@ class MemoryRead(BaseModel):
     updated_at: datetime | None = None
     graph_status: str = 'not_added'
     graph_episode_uuid: str | None = None
+    graph_error: str | None = None
     graph_added_at: datetime | None = None
     source_platform: str | None = None
     source_url: str | None = None

@@ -19,7 +19,7 @@ class StubKnowledgeGraphService:
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_retrieval_node_writes_result_to_reference_store():
     spec = WorkflowNodeSpec(id='retrieval', type='retrieval', config={'query_ref': 'sys.query'})
     node = RetrievalNode(spec, knowledge_graph_service=StubKnowledgeGraphService())

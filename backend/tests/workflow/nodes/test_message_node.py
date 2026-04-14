@@ -6,7 +6,7 @@ from app.workflow.nodes.message_node import MessageNode
 from app.workflow.runtime_context import RuntimeContext
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_message_node_reads_answer_from_node_output():
     spec = WorkflowNodeSpec(
         id='message',

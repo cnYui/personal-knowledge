@@ -7,6 +7,48 @@ import app.routers.chat as chat_router
 from app.main import app
 from app.core.model_errors import ModelAPIError
 from app.schemas.chat import ChatReference
+from app.workflow.engine.citation_postprocessor import CitationResult
+
+
+class StubCitationPostProcessor:
+    def __init__(self, sentence_citations: list[dict] | None = None) -> None:
+        self.sentence_citations = sentence_citations or []
+
+    async def process(self, *, answer: str, reference_store, include_reference_section: bool = True):
+        snapshot = reference_store.snapshot()
+        citations = []
+        for evidence in snapshot.get('graph_evidence', []):
+            if evidence.get('fact'):
+                label = evidence['fact']
+            elif evidence.get('name') and evidence.get('summary'):
+                label = f"{evidence['name']}：{evidence['summary']}"
+            elif evidence.get('summary'):
+                label = evidence['summary']
+            else:
+                label = evidence.get('name') or evidence.get('type')
+            citations.append(
+                {
+                    'index': len(citations) + 1,
+                    'type': evidence.get('type') or 'graph_evidence',
+                    'label': label,
+                    'source': evidence,
+                }
+            )
+        return CitationResult(
+            answer=answer,
+            cited_answer=answer,
+            citations=citations,
+            sentence_citations=list(self.sentence_citations),
+            used_general_fallback=False,
+        )
+
+
+def stub_citation_postprocessor(monkeypatch, sentence_citations: list[dict] | None = None) -> None:
+    monkeypatch.setattr(
+        chat_router.service,
+        'citation_postprocessor',
+        StubCitationPostProcessor(sentence_citations),
+    )
 
 
 def build_expected_trace(trace: dict, references: list[ChatReference]):
@@ -64,6 +106,10 @@ def build_stub_canvas(*, answer: str, references: list[ChatReference], trace: di
         def __init__(self) -> None:
             self.execution_path = ['begin', 'agent', 'message']
             self.reference_store = StubReferenceStore()
+            self._runtime_event_sink = None
+
+        def set_runtime_event_sink(self, sink):
+            self._runtime_event_sink = sink
 
         async def run(self):
             yield SimpleNamespace(event='workflow_started', node_id=None, payload={})
@@ -107,27 +153,30 @@ def test_send_chat_message_returns_answer_and_persists_messages_via_agent(monkey
         )
 
     monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
-    client = TestClient(app)
-    client.delete("/api/chat/messages")
+    stub_citation_postprocessor(monkeypatch, [{'sentence_index': 0, 'citation_indexes': [1]}])
+    with TestClient(app) as client:
+        client.delete("/api/chat/messages")
 
-    response = client.post("/api/chat/messages", json={"message": "什么是向量空间？"})
+        response = client.post("/api/chat/messages", json={"message": "什么是向量空间？"})
 
-    assert response.status_code == 200
-    assert response.json() == {
-        'answer': '这是代理返回的答案。',
-        'references': [
-            {'type': 'entity', 'name': '向量空间', 'summary': '线性代数中的基本概念', 'fact': None}
-        ],
-        'agent_trace': build_expected_trace(trace, references),
-    }
-    assert call_log == [('什么是向量空间？', 'default')]
+        assert response.status_code == 200
+        assert response.json() == {
+            'answer': '这是代理返回的答案。',
+            'references': [
+                {'type': 'entity', 'name': '向量空间', 'summary': '线性代数中的基本概念', 'fact': None}
+            ],
+            'citation_section': ['向量空间：线性代数中的基本概念'],
+            'sentence_citations': [{'sentence_index': 0, 'citation_indexes': [1]}],
+            'agent_trace': build_expected_trace(trace, references),
+        }
+        assert call_log == [('什么是向量空间？', 'default')]
 
-    messages_response = client.get("/api/chat/messages")
-    assert messages_response.status_code == 200
-    assert messages_response.json()[-2:] == [
-        {'id': messages_response.json()[-2]['id'], 'role': 'user', 'content': '什么是向量空间？', 'created_at': messages_response.json()[-2]['created_at']},
-        {'id': messages_response.json()[-1]['id'], 'role': 'assistant', 'content': '这是代理返回的答案。', 'created_at': messages_response.json()[-1]['created_at']},
-    ]
+        messages_response = client.get("/api/chat/messages")
+        assert messages_response.status_code == 200
+        assert messages_response.json()[-2:] == [
+            {'id': messages_response.json()[-2]['id'], 'role': 'user', 'content': '什么是向量空间？', 'created_at': messages_response.json()[-2]['created_at']},
+            {'id': messages_response.json()[-1]['id'], 'role': 'assistant', 'content': '这是代理返回的答案。', 'created_at': messages_response.json()[-1]['created_at']},
+        ]
 
 
 def test_rag_query_returns_agent_answer_without_persisting_messages(monkeypatch):
@@ -144,24 +193,27 @@ def test_rag_query_returns_agent_answer_without_persisting_messages(monkeypatch)
         )
 
     monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
-    client = TestClient(app)
-    client.delete("/api/chat/messages")
+    stub_citation_postprocessor(monkeypatch)
+    with TestClient(app) as client:
+        client.delete("/api/chat/messages")
 
-    response = client.post("/api/chat/rag", json={"message": "向量空间有什么用途？"})
+        response = client.post("/api/chat/rag", json={"message": "向量空间有什么用途？"})
 
-    assert response.status_code == 200
-    assert response.json() == {
-        'answer': '这是仅用于 RAG 查询的答案。',
-        'references': [
-            {'type': 'relationship', 'name': None, 'summary': None, 'fact': '向量空间可用于表示向量集合'}
-        ],
-        'agent_trace': build_expected_trace(trace, references),
-    }
-    assert call_log == [('向量空间有什么用途？', 'default')]
+        assert response.status_code == 200
+        assert response.json() == {
+            'answer': '这是仅用于 RAG 查询的答案。',
+            'references': [
+                {'type': 'relationship', 'name': None, 'summary': None, 'fact': '向量空间可用于表示向量集合'}
+            ],
+            'citation_section': ['向量空间可用于表示向量集合'],
+            'sentence_citations': [],
+            'agent_trace': build_expected_trace(trace, references),
+        }
+        assert call_log == [('向量空间有什么用途？', 'default')]
 
-    messages_response = client.get("/api/chat/messages")
-    assert messages_response.status_code == 200
-    assert messages_response.json() == []
+        messages_response = client.get("/api/chat/messages")
+        assert messages_response.status_code == 200
+        assert messages_response.json() == []
 
 
 def test_rag_query_uses_model_api_exception_handler(monkeypatch):
@@ -176,9 +228,8 @@ def test_rag_query_uses_model_api_exception_handler(monkeypatch):
         )
 
     monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
-    client = TestClient(app)
-
-    response = client.post("/api/chat/rag", json={"message": "解释一下 Transformer"})
+    with TestClient(app) as client:
+        response = client.post("/api/chat/rag", json={"message": "解释一下 Transformer"})
 
     assert response.status_code == 400
     assert response.json() == {
@@ -204,26 +255,25 @@ def test_rag_stream_uses_agent_stream_path_and_returns_sse_payload(monkeypatch):
         )
 
     monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
-    client = TestClient(app)
-
-    with client.stream("POST", "/api/chat/stream", json={"message": "向量空间有什么用途？"}) as response:
-        assert response.status_code == 200
-        assert response.headers['content-type'].startswith('text/event-stream')
-        body = ''.join(response.iter_text())
+    stub_citation_postprocessor(monkeypatch)
+    with TestClient(app) as client:
+        with client.stream("POST", "/api/chat/stream", json={"message": "向量空间有什么用途？"}) as response:
+            assert response.status_code == 200
+            assert response.headers['content-type'].startswith('text/event-stream')
+            body = ''.join(response.iter_text())
 
     assert call_log == [('向量空间有什么用途？', 'default')]
-    assert body == ''.join(
-        [
-            f"data: {json.dumps({'type': 'thinking', 'content': '已创建工作流，正在整理问题与上下文。'}, ensure_ascii=False)}\n\n",
-            f"data: {json.dumps({'type': 'thinking', 'content': '知识库证据充足，正在生成基于证据的回答。'}, ensure_ascii=False)}\n\n",
-            f"data: {json.dumps({'type': 'thinking', 'content': '工作流执行完成，准备返回结果。'}, ensure_ascii=False)}\n\n",
-            f"data: {json.dumps({'type': 'thinking', 'content': '正在整理引用与可解释轨迹。'}, ensure_ascii=False)}\n\n",
-            f"data: {json.dumps({'type': 'trace', 'content': build_expected_trace(trace, references)}, ensure_ascii=False)}\n\n",
-            f"data: {json.dumps({'type': 'references', 'content': [{'type': 'relationship', 'name': None, 'summary': None, 'fact': '向量空间可用于表示向量集合'}]}, ensure_ascii=False)}\n\n",
-            f"data: {json.dumps({'type': 'content', 'content': '这是流式代理答案。'}, ensure_ascii=False)}\n\n",
-            f"data: {json.dumps({'type': 'done', 'content': ''}, ensure_ascii=False)}\n\n",
-        ]
-    )
+    assert '"type": "timeline"' in body
+    assert '"title": "理解问题"' in body
+    assert '"title": "整理引用与轨迹"' in body
+    assert '"type": "trace"' in body
+    assert json.dumps(build_expected_trace(trace, references), ensure_ascii=False) in body
+    assert '"type": "references"' in body
+    assert '"type": "citation_section"' in body
+    assert '"type": "sentence_citations"' in body
+    assert '"type": "content"' in body
+    assert '这是流式代理答案。' in body
+    assert '"type": "done"' in body
 
 
 def test_rag_stream_returns_structured_model_error_payload(monkeypatch):
@@ -238,11 +288,10 @@ def test_rag_stream_returns_structured_model_error_payload(monkeypatch):
         )
 
     monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
-    client = TestClient(app)
-
-    with client.stream("POST", "/api/chat/stream", json={"message": "你好"}) as response:
-        assert response.status_code == 200
-        body = ''.join(response.iter_text())
+    with TestClient(app) as client:
+        with client.stream("POST", "/api/chat/stream", json={"message": "你好"}) as response:
+            assert response.status_code == 200
+            body = ''.join(response.iter_text())
 
     assert body == ''.join(
         [

@@ -21,7 +21,7 @@ class TitleGenerationWorker:
 
     def __init__(self):
         self.title_generator = TitleGenerator()
-        self.queue: asyncio.Queue[str] = asyncio.Queue()
+        self.queue: asyncio.Queue[str] | None = None
         self.running = False
         self.task: asyncio.Task | None = None
 
@@ -31,6 +31,9 @@ class TitleGenerationWorker:
             logger.warning('Title generation worker already running')
             return
 
+        # Recreate the queue on each startup so repeated TestClient lifecycles
+        # do not reuse an asyncio.Queue bound to a previous event loop.
+        self.queue = asyncio.Queue()
         logger.info('Starting title generation worker: queue_size=%s', self.queue.qsize())
         self.running = True
         self.task = asyncio.create_task(self._process_queue())
@@ -58,6 +61,8 @@ class TitleGenerationWorker:
         Args:
             memory_id: ID of the memory to process
         """
+        if self.queue is None:
+            self.queue = asyncio.Queue()
         await self.queue.put(memory_id)
         logger.info(f'Enqueued memory {memory_id} for title generation')
 

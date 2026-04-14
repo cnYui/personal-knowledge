@@ -1,9 +1,14 @@
+import asyncio
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import pytest
 from sqlalchemy import create_engine
@@ -12,17 +17,19 @@ from app.core.database import Base, get_db
 
 
 # Test database setup
-SQLALCHEMY_TEST_DATABASE_URL = 'sqlite:///./test.db'
+TEST_DATABASE_PATH = ROOT / f'test-{os.getpid()}.db'
+SQLALCHEMY_TEST_DATABASE_URL = f'sqlite:///{TEST_DATABASE_PATH.as_posix()}'
 test_engine = create_engine(SQLALCHEMY_TEST_DATABASE_URL, connect_args={'check_same_thread': False})
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
 
 def _is_unit_test_without_app_wiring(nodeid: str) -> bool:
+    normalized_nodeid = nodeid.replace('\\', '/')
     return (
-        'integration' in nodeid
-        or 'workflow' in nodeid
-        or 'tests/services/' in nodeid
-        or 'tests/core/' in nodeid
+        'integration' in normalized_nodeid
+        or 'workflow' in normalized_nodeid
+        or 'tests/services/' in normalized_nodeid
+        or 'tests/core/' in normalized_nodeid
     )
 
 
@@ -34,14 +41,17 @@ def override_get_db():
         db.close()
 
 
-@pytest.fixture(scope='session', autouse=True)
+@pytest.fixture(autouse=True)
 def setup_database(request):
     """Create all database tables before running tests."""
     # Skip for pure unit tests which have their own setup needs
     if _is_unit_test_without_app_wiring(request.node.nodeid):
         yield
         return
-    
+
+    # Ensure all model modules are imported before create_all() so metadata is complete.
+    from app import models as _models  # noqa: F401
+
     Base.metadata.create_all(bind=test_engine)
     yield
     Base.metadata.drop_all(bind=test_engine)
@@ -64,3 +74,8 @@ def override_dependencies(request):
 @pytest.fixture(scope='session')
 def anyio_backend():
     return 'asyncio'
+
+
+def pytest_sessionfinish(session, exitstatus):
+    test_engine.dispose()
+    TEST_DATABASE_PATH.unlink(missing_ok=True)

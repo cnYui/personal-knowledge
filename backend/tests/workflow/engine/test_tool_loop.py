@@ -39,7 +39,7 @@ class FakeLLMClient:
         )()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tool_loop_returns_direct_answer_without_tool_call():
     client = FakeLLMClient([FakeResponse(FakeMessage(content='直接答案'))])
     engine = ToolLoopEngine(client, max_rounds=2)
@@ -55,7 +55,7 @@ async def test_tool_loop_returns_direct_answer_without_tool_call():
     assert result.exceeded_max_rounds is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tool_loop_executes_tool_then_returns_answer():
     client = FakeLLMClient(
         [
@@ -86,7 +86,7 @@ async def test_tool_loop_executes_tool_then_returns_answer():
     assert result.exceeded_max_rounds is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tool_loop_marks_exceeded_max_rounds():
     client = FakeLLMClient(
         [

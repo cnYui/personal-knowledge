@@ -1,8 +1,30 @@
+import pytest
+from unittest.mock import AsyncMock, Mock
+
 from app.workflow.engine.citation_postprocessor import CitationPostProcessor
 from app.workflow.reference_store import ReferenceStore
 
 
-def test_citation_postprocessor_reads_merged_reference_store_and_renders_citations():
+def _build_stub_llm_client(content: str = '{"items": []}'):
+    return Mock(
+        chat=Mock(
+            completions=Mock(
+                create=AsyncMock(
+                    return_value=Mock(
+                        choices=[
+                            Mock(
+                                message=Mock(content=content)
+                            )
+                        ]
+                    )
+                )
+            )
+        )
+    )
+
+
+@pytest.mark.anyio
+async def test_citation_postprocessor_reads_merged_reference_store_and_renders_citations():
     reference_store = ReferenceStore()
     reference_store.merge(
         graph_evidence=[
@@ -15,7 +37,9 @@ def test_citation_postprocessor_reads_merged_reference_store_and_renders_citatio
         ],
     )
 
-    result = CitationPostProcessor().process(
+    result = await CitationPostProcessor(
+        llm_client=_build_stub_llm_client('{"items":[{"sentence_index":0,"citation_indexes":[1,3],"confidence":0.95}]}'),
+    ).process(
         answer='Alice 喜欢绿茶。',
         reference_store=reference_store,
     )
@@ -32,7 +56,8 @@ def test_citation_postprocessor_reads_merged_reference_store_and_renders_citatio
     assert '[3] Alice usually orders green tea after lunch' in result.cited_answer
 
 
-def test_citation_postprocessor_marks_general_fallback_but_only_uses_real_evidence():
+@pytest.mark.anyio
+async def test_citation_postprocessor_marks_general_fallback_but_only_uses_real_evidence():
     reference_store = ReferenceStore()
     reference_store.merge(
         graph_evidence=[
@@ -41,7 +66,9 @@ def test_citation_postprocessor_marks_general_fallback_but_only_uses_real_eviden
     )
     answer = '知识库中未找到充分证据，以下内容为通用模型补充回答。\n\n从一般垃圾分类规则来看，星期一通常会安排某一类垃圾收运。'
 
-    result = CitationPostProcessor().process(
+    result = await CitationPostProcessor(
+        llm_client=_build_stub_llm_client(),
+    ).process(
         answer=answer,
         reference_store=reference_store,
     )
