@@ -4,9 +4,13 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import app.routers.chat as chat_router
+import app.workflow.nodes.agent_node as agent_node_module
 from app.main import app
 from app.core.model_errors import ModelAPIError
+from app.schemas.agent import GraphRetrievalResult
 from app.schemas.chat import ChatReference
+from app.services.chat_service import ChatService
+from app.workflow.canvas_factory import CanvasFactory
 from app.workflow.engine.citation_postprocessor import CitationResult
 
 
@@ -49,6 +53,82 @@ def stub_citation_postprocessor(monkeypatch, sentence_citations: list[dict] | No
         'citation_postprocessor',
         StubCitationPostProcessor(sentence_citations),
     )
+
+
+class StubKnowledgeProfileService:
+    @staticmethod
+    def compose_system_prompt(base: str) -> str:
+        return f'{base}\n\n[overlay]'
+
+
+class FakeToolCall:
+    def __init__(self, tool_id: str, name: str, arguments: str) -> None:
+        self.id = tool_id
+        self.function = type('Function', (), {'name': name, 'arguments': arguments})()
+
+
+class FakeMessage:
+    def __init__(self, content: str = '', tool_calls=None) -> None:
+        self.content = content
+        self.tool_calls = tool_calls or []
+
+
+class FakeResponse:
+    def __init__(self, message: FakeMessage) -> None:
+        self.choices = [type('Choice', (), {'message': message})()]
+
+
+class FakeCompletions:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.responses[len(self.calls) - 1]
+
+
+class FakeLLMClient:
+    def __init__(self, responses):
+        self.chat = type(
+            'Chat',
+            (),
+            {'completions': FakeCompletions(responses)},
+        )()
+
+
+class StubKnowledgeGraphService:
+    def __init__(self, *, llm_client, grounded_answer: str = '这是知识库回答。') -> None:
+        self.llm_client = llm_client
+        self._dialog_model = 'deepseek-chat'
+        self.grounded_answer = grounded_answer
+
+    def _ensure_dialog_client(self) -> None:
+        return
+
+    async def answer_with_context(self, query: str, retrieval_result: GraphRetrievalResult) -> dict:
+        return {'answer': self.grounded_answer, 'references': retrieval_result.references}
+
+
+def configure_real_canvas_chat_service(
+    monkeypatch,
+    *,
+    llm_responses: list[FakeResponse],
+    graph_retrieval_tool,
+    grounded_answer: str = '这是知识库回答。',
+) -> None:
+    llm_client = FakeLLMClient(llm_responses)
+    knowledge_graph_service = StubKnowledgeGraphService(
+        llm_client=llm_client,
+        grounded_answer=grounded_answer,
+    )
+    chat_router.service = ChatService(
+        canvas_factory=CanvasFactory(
+            knowledge_graph_service=knowledge_graph_service,
+            graph_retrieval_tool=graph_retrieval_tool,
+        ),
+    )
+    monkeypatch.setattr(agent_node_module, 'agent_knowledge_profile_service', StubKnowledgeProfileService())
 
 
 def build_expected_trace(trace: dict, references: list[ChatReference]):
@@ -311,3 +391,123 @@ def test_rag_stream_returns_structured_model_error_payload(monkeypatch):
             + "\n\n"
         ]
     )
+
+
+def test_rag_query_real_canvas_probe_sufficient_skips_tool_loop(monkeypatch):
+    class StubGraphRetrievalTool:
+        async def run(self, query: str, group_id: str = 'default'):
+            return GraphRetrievalResult(
+                context='关系: OpenAI 发布了新的模型更新',
+                references=[ChatReference(type='relationship', fact='OpenAI 发布了新的模型更新')],
+                has_enough_evidence=True,
+                retrieved_edge_count=1,
+                group_id=group_id,
+            )
+
+    configure_real_canvas_chat_service(
+        monkeypatch,
+        llm_responses=[FakeResponse(FakeMessage(content='OpenAI / 模型更新'))],
+        graph_retrieval_tool=StubGraphRetrievalTool(),
+        grounded_answer='根据知识库，OpenAI 最近发布了新的模型更新。',
+    )
+    stub_citation_postprocessor(monkeypatch)
+
+    with TestClient(app) as client:
+        response = client.post("/api/chat/rag", json={"message": "OpenAI 最近有什么动态？"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['answer'] == '根据知识库，OpenAI 最近发布了新的模型更新。'
+    assert payload['agent_trace']['final_action'] == 'kb_grounded_answer'
+    assert payload['agent_trace']['retrieval_rounds'] == 1
+    assert payload['agent_trace']['tool_loop']['forced_retrieval'] is True
+    assert payload['agent_trace']['tool_loop']['probe_decision'] == 'sufficient'
+    assert payload['agent_trace']['tool_loop']['tool_steps'] == []
+
+
+def test_rag_query_real_canvas_probe_no_hit_retry_then_direct_general(monkeypatch):
+    class StubGraphRetrievalTool:
+        async def run(self, query: str, group_id: str = 'default'):
+            return GraphRetrievalResult(
+                context='',
+                references=[],
+                has_enough_evidence=False,
+                empty_reason='图谱中没有足够信息',
+                retrieved_edge_count=0,
+                group_id=group_id,
+            )
+
+    configure_real_canvas_chat_service(
+        monkeypatch,
+        llm_responses=[
+            FakeResponse(FakeMessage(content='OpenAI / 最近动态')),
+            FakeResponse(FakeMessage(content='这是基于通用模型的回答。')),
+        ],
+        graph_retrieval_tool=StubGraphRetrievalTool(),
+    )
+    stub_citation_postprocessor(monkeypatch)
+
+    with TestClient(app) as client:
+        response = client.post("/api/chat/rag", json={"message": "OpenAI 最近有什么动态？"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['answer'] == '这是基于通用模型的回答。'
+    assert payload['references'] == []
+    assert payload['agent_trace']['final_action'] == 'direct_general_answer'
+    assert payload['agent_trace']['retrieval_rounds'] == 2
+    assert payload['agent_trace']['tool_loop']['forced_retrieval'] is True
+    assert payload['agent_trace']['tool_loop']['probe_decision'] == 'no_hit'
+    assert payload['agent_trace']['tool_loop']['probe_queries'] == ['OpenAI 最近有什么动态？', 'OpenAI / 最近动态']
+    assert payload['agent_trace']['tool_loop']['tool_steps'] == []
+
+
+def test_rag_query_real_canvas_probe_insufficient_enters_tool_loop(monkeypatch):
+    class StubGraphRetrievalTool:
+        async def run(self, query: str, group_id: str = 'default'):
+            if query == '什么是向量空间？':
+                return GraphRetrievalResult(
+                    context='实体: 向量空间\n描述: 线性代数基础对象',
+                    references=[ChatReference(type='entity', name='向量空间', summary='线性代数基础对象')],
+                    has_enough_evidence=False,
+                    empty_reason='证据不足',
+                    retrieved_edge_count=1,
+                    group_id=group_id,
+                )
+            return GraphRetrievalResult(
+                context='关系: 向量空间定义了加法和数乘运算',
+                references=[ChatReference(type='relationship', fact='向量空间定义了加法和数乘运算')],
+                has_enough_evidence=True,
+                retrieved_edge_count=1,
+                group_id=group_id,
+            )
+
+    configure_real_canvas_chat_service(
+        monkeypatch,
+        llm_responses=[
+            FakeResponse(FakeMessage(content='向量空间 / 定义')),
+            FakeResponse(
+                FakeMessage(
+                    tool_calls=[
+                        FakeToolCall('tool-1', 'graph_retrieval_tool', '{"query":"向量空间的定义"}')
+                    ]
+                )
+            ),
+            FakeResponse(FakeMessage(content='向量空间是定义了加法和数乘运算的集合。')),
+        ],
+        graph_retrieval_tool=StubGraphRetrievalTool(),
+    )
+    stub_citation_postprocessor(monkeypatch)
+
+    with TestClient(app) as client:
+        response = client.post("/api/chat/rag", json={"message": "什么是向量空间？"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['answer'] == '向量空间是定义了加法和数乘运算的集合。'
+    assert payload['agent_trace']['final_action'] == 'kb_grounded_answer'
+    assert payload['agent_trace']['retrieval_rounds'] == 2
+    assert payload['agent_trace']['tool_loop']['forced_retrieval'] is True
+    assert payload['agent_trace']['tool_loop']['probe_decision'] == 'insufficient'
+    assert len(payload['agent_trace']['tool_loop']['tool_steps']) == 1
+    assert payload['agent_trace']['tool_loop']['tool_steps'][0]['arguments']['query'] == '向量空间的定义'

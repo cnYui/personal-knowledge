@@ -108,6 +108,24 @@ class AgentNode(WorkflowNode):
     def _normalize_query(self, query: str) -> str:
         return str(query or '').strip()
 
+    def _should_skip_probe(self, query: str) -> bool:
+        normalized = self._normalize_query(query).lower()
+        if not normalized:
+            return True
+        return normalized in {
+            'hi',
+            'hello',
+            'hey',
+            '你好',
+            '您好',
+            '嗨',
+            '早上好',
+            '中午好',
+            '下午好',
+            '晚上好',
+            '在吗',
+        }
+
     def _get_knowledge_graph_service(self) -> KnowledgeGraphService:
         if self.knowledge_graph_service is None:
             self.knowledge_graph_service = KnowledgeGraphService()
@@ -363,6 +381,54 @@ class AgentNode(WorkflowNode):
             'agent_trace': trace,
         }
 
+    def _classify_probe_result(self, result: GraphRetrievalResult) -> str:
+        if result.has_enough_evidence:
+            return 'sufficient'
+        if (not result.references) or result.retrieved_edge_count <= 0 or not str(result.context or '').strip():
+            return 'no_hit'
+        return 'insufficient'
+
+    def _write_probe_reference_store(self, canvas, *, result: GraphRetrievalResult, probe_index: int) -> None:
+        canvas.reference_store.merge(
+            chunks=[
+                {
+                    'id': f'{self.node_id}-probe-{probe_index}-{index}',
+                    'content': reference.fact or reference.summary or reference.name or reference.type,
+                }
+                for index, reference in enumerate(result.references)
+            ],
+            graph_evidence=[reference.model_dump() for reference in result.references],
+        )
+
+    async def _run_probe(
+        self,
+        *,
+        query: str,
+        canvas,
+        group_id: str,
+        probe_index: int,
+    ) -> GraphRetrievalResult:
+        result = await self._get_graph_retrieval_tool().run(query, group_id=group_id)
+        self._write_probe_reference_store(canvas, result=result, probe_index=probe_index)
+        return result
+
+    async def _retry_probe_with_focus_points(
+        self,
+        *,
+        query: str,
+        focus_points: str,
+        canvas,
+        group_id: str,
+        probe_index: int,
+    ) -> tuple[str, GraphRetrievalResult]:
+        retry_query = str(focus_points or '').strip() or query
+        return retry_query, await self._run_probe(
+            query=retry_query,
+            canvas=canvas,
+            group_id=group_id,
+            probe_index=probe_index,
+        )
+
     async def execute(self, context, canvas):
         query_ref = self.config.get('query_ref', 'sys.query')
         group_id = self.config.get('group_id', 'default')
@@ -397,6 +463,149 @@ class AgentNode(WorkflowNode):
             }
         )
 
+        probe_results: list[GraphRetrievalResult] = []
+        probe_queries: list[str] = []
+        probe_decision = 'skipped'
+
+        if not self._should_skip_probe(query):
+            emit_timeline(
+                {
+                    'type': 'timeline',
+                    'id': 'probe-retrieval',
+                    'kind': 'retrieval',
+                    'title': '预检知识库',
+                    'detail': f'先用原始问题做一轮轻量探测：{query}',
+                    'status': 'started',
+                }
+            )
+            first_probe = await self._run_probe(
+                query=query,
+                canvas=canvas,
+                group_id=group_id,
+                probe_index=1,
+            )
+            probe_results.append(first_probe)
+            probe_queries.append(query)
+            first_probe_class = self._classify_probe_result(first_probe)
+            probe_decision = first_probe_class
+            self._append_trace_step(
+                trace,
+                step_type='retrieval',
+                query=query,
+                message=f'预检知识库完成，判定为 {first_probe_class}。',
+                evidence_found=first_probe.has_enough_evidence,
+                retrieved_edge_count=first_probe.retrieved_edge_count,
+                action='probe_retrieve',
+            )
+
+            if first_probe_class == 'no_hit':
+                emit_timeline(
+                    {
+                        'type': 'timeline',
+                        'id': 'probe-retrieval-retry',
+                        'kind': 'retrieval',
+                        'title': '重试预检',
+                        'detail': f'首轮无命中，改用检索重点重试：{focus_points}',
+                        'status': 'started',
+                    }
+                )
+                retry_query, retry_probe = await self._retry_probe_with_focus_points(
+                    query=query,
+                    focus_points=focus_points,
+                    canvas=canvas,
+                    group_id=group_id,
+                    probe_index=2,
+                )
+                probe_results.append(retry_probe)
+                probe_queries.append(retry_query)
+                retry_probe_class = self._classify_probe_result(retry_probe)
+                probe_decision = retry_probe_class
+                self._append_trace_step(
+                    trace,
+                    step_type='retrieval',
+                    query=retry_query,
+                    message=f'重试预检完成，判定为 {retry_probe_class}。',
+                    evidence_found=retry_probe.has_enough_evidence,
+                    retrieved_edge_count=retry_probe.retrieved_edge_count,
+                    action='probe_retry',
+                )
+
+        retrieval_result = self._combine_retrieval_results(probe_results)
+
+        if probe_decision == 'sufficient':
+            emit_timeline(
+                {
+                    'type': 'timeline',
+                    'id': 'final-answer',
+                    'kind': 'answer',
+                    'title': '直接基于证据回答',
+                    'detail': '预检证据已充分，跳过多轮 tool loop，直接组织 grounded answer。',
+                    'status': 'started',
+                }
+            )
+            knowledge_result = await self._get_knowledge_graph_service().answer_with_context(
+                query,
+                retrieval_result,
+            )
+            answer = str(knowledge_result.get('answer') or '').strip()
+            trace.retrieval_rounds = len(probe_queries)
+            trace.final_action = 'kb_grounded_answer'
+            self._append_trace_step(
+                trace,
+                step_type='answer',
+                query=query,
+                message='预检证据充分，直接基于知识库生成最终答案。',
+                evidence_found=True,
+                retrieved_edge_count=retrieval_result.retrieved_edge_count,
+                action='answer_from_kb',
+            )
+            result = self._result_payload(
+                answer=answer,
+                references=retrieval_result.references,
+                trace=trace,
+            )
+            result['workflow_debug'] = {
+                'forced_retrieval': True,
+                'probe_queries': probe_queries,
+                'probe_decision': probe_decision,
+                'tool_rounds_exceeded': False,
+                'tool_steps': [],
+            }
+            context.set_global(output_key, result)
+            return result
+
+        if probe_decision == 'no_hit' and probe_results:
+            emit_timeline(
+                {
+                    'type': 'timeline',
+                    'id': 'final-answer',
+                    'kind': 'answer',
+                    'title': '降级通用回答',
+                    'detail': '两轮预检都没有命中知识库，直接给出通用回答。',
+                    'status': 'started',
+                }
+            )
+            answer = await self._answer_with_general_model(query, None)
+            trace.retrieval_rounds = len(probe_queries)
+            trace.final_action = 'direct_general_answer'
+            self._append_trace_step(
+                trace,
+                step_type='answer',
+                query=query,
+                message='知识库预检无命中，直接生成通用回答。',
+                action='answer_directly',
+            )
+            result = self._result_payload(answer=answer, references=[], trace=trace)
+            result['workflow_debug'] = {
+                'forced_retrieval': True,
+                'probe_queries': probe_queries,
+                'probe_decision': probe_decision,
+                'tool_rounds_exceeded': False,
+                'tool_steps': [],
+            }
+            context.set_global(output_key, result)
+            return result
+
         tool_loop_result = await self._get_tool_loop_engine().run(
             messages=self._build_messages(context, query),
             tool_schemas=self._tool_schemas(),
@@ -424,10 +633,14 @@ class AgentNode(WorkflowNode):
                 retrieved_edge_count=retrieved_edge_count,
                 action='retrieve' if not step.error else 'retrieve_error',
             )
-        trace.retrieval_rounds = len([step for step in tool_loop_result.steps if step.tool_name == graph_tool.name])
+        trace.retrieval_rounds = len(probe_queries) + len(
+            [step for step in tool_loop_result.steps if step.tool_name == graph_tool.name]
+        )
 
         workflow_debug = {
-            'forced_retrieval': False,
+            'forced_retrieval': bool(probe_queries),
+            'probe_queries': probe_queries,
+            'probe_decision': probe_decision,
             'tool_rounds_exceeded': tool_loop_result.exceeded_max_rounds,
             'tool_steps': [
                 {
@@ -448,9 +661,9 @@ class AgentNode(WorkflowNode):
             ],
         }
 
-        retrieval_result = self._combine_retrieval_results(graph_tool.results)
+        retrieval_result = self._combine_retrieval_results([*probe_results, *graph_tool.results])
 
-        if not tool_loop_result.steps:
+        if not tool_loop_result.steps and not retrieval_result.references:
             emit_timeline(
                 {
                     'type': 'timeline',
