@@ -59,6 +59,8 @@ interface ApiKeyCardProps {
   editing: boolean
   revealValue: boolean
   onToggleEdit: () => void
+  onSave: () => void
+  saving: boolean
   onToggleReveal: () => void
   onChange: (nextValue: string) => void
 }
@@ -87,6 +89,8 @@ function ApiKeyCard({
   editing,
   revealValue,
   onToggleEdit,
+  onSave,
+  saving,
   onToggleReveal,
   onChange,
 }: ApiKeyCardProps) {
@@ -150,11 +154,22 @@ function ApiKeyCard({
           }
         />
 
-        <Stack direction="row" justifyContent="flex-end">
-          <Button variant={editing ? 'contained' : 'outlined'} startIcon={<EditOutlinedIcon />} onClick={onToggleEdit}>
-            {editing ? '取消编辑' : '编辑 Key'}
-          </Button>
-        </Stack>
+        {editing ? (
+          <Stack direction="row" justifyContent="flex-end" spacing={1}>
+            <Button variant="contained" startIcon={<SaveOutlinedIcon />} onClick={onSave} disabled={saving}>
+              {saving ? '保存中...' : '保存'}
+            </Button>
+            <Button variant="outlined" startIcon={<EditOutlinedIcon />} onClick={onToggleEdit} disabled={saving}>
+              取消编辑
+            </Button>
+          </Stack>
+        ) : (
+          <Stack direction="row" justifyContent="flex-end">
+            <Button variant="outlined" startIcon={<EditOutlinedIcon />} onClick={onToggleEdit}>
+              编辑 Key
+            </Button>
+          </Stack>
+        )}
       </Stack>
     </Paper>
   )
@@ -418,6 +433,25 @@ export function SettingsPage() {
 
   const knowledgeProfile = data.knowledge_profile ?? EMPTY_KNOWLEDGE_PROFILE
 
+  const persistPayload = async (payload: { dialog_api_key?: string; knowledge_build_api_key?: string }) => {
+    if (!Object.keys(payload).length) {
+      showToast({ severity: 'info', message: '当前没有需要保存的改动。' })
+      return
+    }
+
+    try {
+      await updateMutation.mutateAsync(payload)
+      showToast({ severity: 'success', message: 'API Key 已保存，并已立即热更新到后端。' })
+    } catch (error) {
+      const normalizedError = normalizeApiError(error)
+      showToast({
+        severity: normalizedError.error_code === 'MODEL_API_KEY_MISSING' ? 'warning' : 'error',
+        message: normalizedError.message,
+      })
+      throw error
+    }
+  }
+
   const handleSave = async () => {
     const payload: { dialog_api_key?: string; knowledge_build_api_key?: string } = {}
     if (isEditingDialog) {
@@ -427,27 +461,39 @@ export function SettingsPage() {
       payload.knowledge_build_api_key = knowledgeBuildValue
     }
 
-    if (!Object.keys(payload).length) {
-      showToast({ severity: 'info', message: '当前没有需要保存的改动。' })
-      return
-    }
-
     try {
-      await updateMutation.mutateAsync(payload)
+      await persistPayload(payload)
       setIsEditingDialog(false)
       setIsEditingKnowledgeBuild(false)
       setShowDialogValue(false)
       setShowKnowledgeBuildValue(false)
       setDialogValue('')
       setKnowledgeBuildValue('')
-      showToast({ severity: 'success', message: 'API Key 已保存，并已立即热更新到后端。' })
-    } catch (error) {
-      const normalizedError = normalizeApiError(error)
-      showToast({
-        severity: normalizedError.error_code === 'MODEL_API_KEY_MISSING' ? 'warning' : 'error',
-        message: normalizedError.message,
-      })
+    } catch {}
+  }
+
+  const handleSaveDialogKey = async () => {
+    if (!isEditingDialog) {
+      return
     }
+    try {
+      await persistPayload({ dialog_api_key: dialogValue })
+      setIsEditingDialog(false)
+      setShowDialogValue(false)
+      setDialogValue('')
+    } catch {}
+  }
+
+  const handleSaveKnowledgeBuildKey = async () => {
+    if (!isEditingKnowledgeBuild) {
+      return
+    }
+    try {
+      await persistPayload({ knowledge_build_api_key: knowledgeBuildValue })
+      setIsEditingKnowledgeBuild(false)
+      setShowKnowledgeBuildValue(false)
+      setKnowledgeBuildValue('')
+    } catch {}
   }
 
   return (
@@ -480,6 +526,8 @@ export function SettingsPage() {
               value={dialogValue}
               editing={isEditingDialog}
               revealValue={showDialogValue}
+              onSave={handleSaveDialogKey}
+              saving={updateMutation.isPending}
               onToggleEdit={() => {
                 setIsEditingDialog((prev) => !prev)
                 setDialogValue('')
@@ -500,6 +548,8 @@ export function SettingsPage() {
               value={knowledgeBuildValue}
               editing={isEditingKnowledgeBuild}
               revealValue={showKnowledgeBuildValue}
+              onSave={handleSaveKnowledgeBuildKey}
+              saving={updateMutation.isPending}
               onToggleEdit={() => {
                 setIsEditingKnowledgeBuild((prev) => !prev)
                 setKnowledgeBuildValue('')
