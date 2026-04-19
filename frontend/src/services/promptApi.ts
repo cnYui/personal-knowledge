@@ -1,46 +1,26 @@
-import axios from 'axios'
-
-import { buildApiUrl } from './apiClient'
+import { getJson, postJson, putJson } from './http'
 import { ComposedPrompt, KnowledgeProfile, PromptConfig, PromptConfigUpdate } from '../types/prompt'
 
-export async function fetchAllPrompts(): Promise<Record<string, PromptConfig>> {
-  const response = await axios.get<Record<string, PromptConfig>>(buildApiUrl('/api/prompts'))
-  return response.data
+export function fetchAllPrompts(): Promise<Record<string, PromptConfig>> {
+  return getJson<Record<string, PromptConfig>>('/api/prompts')
 }
 
-export async function fetchPrompt(key: string): Promise<PromptConfig> {
-  try {
-    const response = await axios.get<PromptConfig>(buildApiUrl(`/api/prompts/${key}`))
-    return response.data
-  } catch (error) {
-    throw error
-  }
+export function fetchPrompt(key: string): Promise<PromptConfig> {
+  return getJson<PromptConfig>(`/api/prompts/${key}`)
 }
 
-export async function updatePrompt(key: string, data: PromptConfigUpdate): Promise<PromptConfig> {
-  try {
-    const response = await axios.put<PromptConfig>(buildApiUrl(`/api/prompts/${key}`), data)
-    return response.data
-  } catch (error) {
-    throw error
-  }
+export function updatePrompt(key: string, data: PromptConfigUpdate): Promise<PromptConfig> {
+  return putJson<PromptConfig>(`/api/prompts/${key}`, data)
 }
 
-export async function resetPrompt(key: string): Promise<PromptConfig> {
-  try {
-    const response = await axios.post<PromptConfig>(buildApiUrl(`/api/prompts/${key}/reset`))
-    return response.data
-  } catch (error) {
-    throw error
-  }
+export function resetPrompt(key: string): Promise<PromptConfig> {
+  return postJson<PromptConfig>(`/api/prompts/${key}/reset`)
 }
 
-export async function fetchKnowledgeProfile(): Promise<KnowledgeProfile> {
-  const response = await axios.get<KnowledgeProfile>(buildApiUrl('/api/prompts/knowledge-profile'))
-  return response.data
+export function fetchKnowledgeProfile(): Promise<KnowledgeProfile> {
+  return getJson<KnowledgeProfile>('/api/prompts/knowledge-profile')
 }
 
-export async function fetchComposedPrompt(): Promise<ComposedPrompt> {
-  const response = await axios.get<ComposedPrompt>(buildApiUrl('/api/prompts/composed-system-prompt'))
-  return response.data
+export function fetchComposedPrompt(): Promise<ComposedPrompt> {
+  return getJson<ComposedPrompt>('/api/prompts/composed-system-prompt')
 }
