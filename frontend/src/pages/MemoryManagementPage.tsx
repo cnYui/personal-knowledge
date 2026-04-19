@@ -15,7 +15,7 @@ import {
   useMemories,
   useUpdateMemory,
 } from '../hooks/useMemories'
-import { normalizeApiError } from '../services/apiClient'
+import { normalizeApiError } from '../services/http'
 import { Memory } from '../types/memory'
 
 function resolveAddToGraphErrorMessage(error: unknown) {
