@@ -17,6 +17,7 @@
   } = globalThis.JumpAINavigation;
   const {
     DEFAULT_KNOWLEDGE_CAPTURE_API,
+    buildKnowledgeCaptureApiCandidates,
     loadKnowledgeCaptureApi,
     loadPanelPosition,
     persistPanelPosition,
@@ -219,6 +220,7 @@
       setPanelMode: () => {},
       refreshCaptureEntry,
       getCaptureDraft: getCurrentCaptureDraft,
+      getKnowledgeCaptureApiCandidates: buildKnowledgeCaptureApiCandidates,
       setSaveStatus,
       persistKnowledgeCaptureApi: async () => {},
       getSaveRequestTimeoutMs: () => SAVE_REQUEST_TIMEOUT_MS,

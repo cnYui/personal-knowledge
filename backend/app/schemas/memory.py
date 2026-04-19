@@ -15,7 +15,7 @@ class MemoryCreate(BaseModel):
 
 
 class MemoryClipCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=255)
+    title: str = Field(default='', max_length=255)
     content: str = Field(min_length=1)
     source_platform: str = Field(min_length=1, max_length=64)
     source_url: str = Field(min_length=1, max_length=1024)

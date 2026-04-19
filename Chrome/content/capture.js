@@ -38,12 +38,6 @@
     return (selection.toString() || '').replace(/\s+/g, ' ').trim();
   }
 
-  function buildDefaultTitle(text) {
-    const normalized = (text || '').replace(/\s+/g, ' ').trim();
-    if (!normalized) return '浏览器摘录';
-    return normalized.length > 30 ? normalized.slice(0, 30) : normalized;
-  }
-
   function buildSelectionMeta(selectedText, currentPlatform, platformName, url) {
     if (!selectedText) return null;
     return {
@@ -58,7 +52,7 @@
     if (!normalized) return null;
 
     return {
-      title: buildDefaultTitle(normalized),
+      title: '',
       content: normalized,
       apiUrl,
     };
@@ -110,11 +104,15 @@
         if (!response.ok) {
           const errorText = await response.text();
           console.error('[PKB Chrome] 保存摘录请求失败', {
+            apiUrl,
             status: response.status,
             statusText: response.statusText,
             body: errorText,
           });
-          throw new Error(errorText || `保存失败 (${response.status})`);
+          const error = new Error(errorText || `保存失败 (${response.status})`);
+          error.status = response.status;
+          error.apiUrl = apiUrl;
+          throw error;
         }
 
         const data = await response.json();
@@ -175,12 +173,11 @@
       }
       const payload = buildCaptureRequestPayload(draft, deps.getSelectionMeta());
 
-      if (!draft.title || !draft.content) {
-        console.warn('[PKB Chrome] 标题或正文为空，停止保存', {
-          hasTitle: !!draft.title,
+      if (!draft.content) {
+        console.warn('[PKB Chrome] 正文为空，停止保存', {
           hasContent: !!draft.content,
         });
-        deps.setSaveStatus('标题和正文不能为空', 'error');
+        deps.setSaveStatus('正文不能为空', 'error');
         return;
       }
       if (!payload) {
@@ -192,8 +189,32 @@
       deps.setSaveStatus('正在保存到记忆管理...', 'neutral');
 
       try {
-        await deps.persistKnowledgeCaptureApi(draft.apiUrl);
-        const saved = await sendPayload(draft.apiUrl, payload);
+        const apiCandidates = deps.getKnowledgeCaptureApiCandidates(draft.apiUrl);
+        let saved = null;
+        let lastError = null;
+        let activeApiUrl = draft.apiUrl;
+
+        for (const apiUrl of apiCandidates) {
+          try {
+            saved = await sendPayload(apiUrl, payload);
+            activeApiUrl = apiUrl;
+            break;
+          } catch (error) {
+            lastError = error;
+            const isAbort = error?.name === 'AbortError';
+            const isNetworkError = error?.message === 'Failed to fetch';
+            const isNotFound = error?.status === 404;
+            if (!(isAbort || isNetworkError || isNotFound)) {
+              throw error;
+            }
+          }
+        }
+
+        if (!saved) {
+          throw lastError || new Error('请检查个人知识库服务是否已启动');
+        }
+
+        await deps.persistKnowledgeCaptureApi(activeApiUrl);
         deps.setSaveStatus(`已保存：${saved?.title || draft.title}`, 'success');
         clearSelectedCaptureState();
         deps.onSaved?.(saved);
@@ -218,7 +239,6 @@
 
   globalThis.JumpAICapture = {
     getCurrentSelectionText,
-    buildDefaultTitle,
     buildSelectionMeta,
     getCaptureDraft,
     buildCaptureRequestPayload,

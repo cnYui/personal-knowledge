@@ -20,7 +20,7 @@ def create_memory(payload: MemoryCreate, db: Session = Depends(get_db)) -> Memor
 
 
 @router.post("/clip", response_model=MemoryRead, status_code=status.HTTP_201_CREATED)
-def create_memory_clip(payload: MemoryClipCreate, db: Session = Depends(get_db)) -> MemoryRead:
+async def create_memory_clip(payload: MemoryClipCreate, db: Session = Depends(get_db)) -> MemoryRead:
     logger.info(
         "Received browser clip save request: title=%s source_platform=%s source_type=%s source_url=%s content_length=%s",
         payload.title,
@@ -29,7 +29,7 @@ def create_memory_clip(payload: MemoryClipCreate, db: Session = Depends(get_db))
         payload.source_url,
         len(payload.content or ""),
     )
-    memory = service.create_memory_clip(db, payload)
+    memory = await service.create_memory_clip(db, payload)
     logger.info("Browser clip saved successfully: memory_id=%s title=%s", memory.id, memory.title)
     return memory
 

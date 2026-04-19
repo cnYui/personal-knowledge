@@ -6,11 +6,12 @@ from app.core.database import get_db
 from app.models.memory import Memory, MemoryImage
 from app.schemas.upload import MemoryUploadResponse
 from app.services.image_processing_service import ImageProcessingService
+from app.services.memory_service import MemoryService
 from app.utils.file_storage import save_upload
-from app.workers.title_generation_worker import title_generation_worker
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 image_processing_service = ImageProcessingService()
+memory_service = MemoryService()
 
 
 @router.post("/memories", response_model=MemoryUploadResponse, status_code=status.HTTP_201_CREATED)
@@ -21,17 +22,22 @@ async def upload_memory(
     images: list[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
 ):
-    resolved_title = title.strip() or '标题生成中'
-    title_status = 'pending' if resolved_title == '标题生成中' else 'ready'
-    memory = Memory(
-        title=resolved_title,
-        title_status=title_status,
-        content=content,
-        group_id=group_id.strip() or 'default',
-    )
-    db.add(memory)
-    db.commit()
-    db.refresh(memory)
+    if title.strip():
+        memory = Memory(
+            title=title.strip(),
+            title_status='ready',
+            content=content,
+            group_id=group_id.strip() or 'default',
+        )
+        db.add(memory)
+        db.commit()
+        db.refresh(memory)
+    else:
+        memory = await memory_service.create_pending_title_memory(
+            db,
+            content=content,
+            group_id=group_id,
+        )
 
     processed_count = 0
     for image in images:
@@ -51,9 +57,7 @@ async def upload_memory(
 
     db.commit()
 
-    # Enqueue for title generation if needed
-    if title_status == 'pending':
-        await title_generation_worker.enqueue(memory.id)
+    title_status = memory.title_status
 
     return MemoryUploadResponse(
         id=memory.id,

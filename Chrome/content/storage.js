@@ -2,6 +2,11 @@
   'use strict';
 
   const DEFAULT_KNOWLEDGE_CAPTURE_API = 'http://127.0.0.1:8000/api/memories/clip';
+  const FALLBACK_KNOWLEDGE_CAPTURE_APIS = [
+    'http://localhost:8000/api/memories/clip',
+    'http://127.0.0.1:8002/api/memories/clip',
+    'http://localhost:8002/api/memories/clip',
+  ];
   const KNOWLEDGE_CAPTURE_API_STORAGE_KEY = 'jumpai_knowledge_capture_api';
   const PANEL_POSITION_STORAGE_KEY = 'jumpai_panel_position';
 
@@ -40,6 +45,13 @@
   function normalizeKnowledgeCaptureApi(value) {
     const normalized = (value || '').trim();
     return normalized || DEFAULT_KNOWLEDGE_CAPTURE_API;
+  }
+
+  function buildKnowledgeCaptureApiCandidates(value) {
+    const normalized = normalizeKnowledgeCaptureApi(value);
+    return [normalized, DEFAULT_KNOWLEDGE_CAPTURE_API, ...FALLBACK_KNOWLEDGE_CAPTURE_APIS].filter((item, index, list) => {
+      return !!item && list.indexOf(item) === index;
+    });
   }
 
   function normalizePanelPosition(value) {
@@ -89,6 +101,7 @@
     loadKnowledgeCaptureApi,
     persistKnowledgeCaptureApi,
     normalizeKnowledgeCaptureApi,
+    buildKnowledgeCaptureApiCandidates,
     loadPanelPosition,
     persistPanelPosition,
   };

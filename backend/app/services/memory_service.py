@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.repositories.memory_repository import MemoryRepository
 from app.schemas.memory import MemoryClipCreate, MemoryCreate, MemoryUpdate
+from app.workers.title_generation_worker import title_generation_worker
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,31 @@ class MemoryService:
     def create_memory(self, db: Session, payload: MemoryCreate):
         return self.repository.create(db, payload)
 
-    def create_memory_clip(self, db: Session, payload: MemoryClipCreate):
+    async def create_pending_title_memory(
+        self,
+        db: Session,
+        *,
+        content: str,
+        group_id: str = 'default',
+        source_platform: str | None = None,
+        source_url: str | None = None,
+        source_type: str | None = None,
+    ):
+        memory_payload = MemoryCreate(
+            title='标题生成中',
+            content=content,
+            group_id=group_id.strip() or 'default',
+            title_status='pending',
+            source_platform=source_platform,
+            source_url=source_url,
+            source_type=source_type,
+        )
+        memory = self.repository.create(db, memory_payload)
+        await title_generation_worker.enqueue(memory.id)
+        logger.info("Created pending-title memory: memory_id=%s", memory.id)
+        return memory
+
+    async def create_memory_clip(self, db: Session, payload: MemoryClipCreate):
         logger.info(
             "Creating memory clip payload: title=%s source_platform=%s source_type=%s content_length=%s",
             payload.title,
@@ -24,15 +49,13 @@ class MemoryService:
             payload.source_type,
             len(payload.content or ""),
         )
-        memory_payload = MemoryCreate(
-            title=payload.title,
+        memory = await self.create_pending_title_memory(
+            db,
             content=payload.content,
-            title_status='ready',
             source_platform=payload.source_platform,
             source_url=payload.source_url,
             source_type=payload.source_type,
         )
-        memory = self.repository.create(db, memory_payload)
         logger.info("Created memory clip record: memory_id=%s title=%s", memory.id, memory.title)
         return memory
 

@@ -29,7 +29,15 @@ def test_model_config_service_reads_masked_config_from_env(tmp_path):
 
 def test_model_config_service_update_config_persists_and_bumps_runtime_version(tmp_path):
     env_path = tmp_path / '.env'
-    env_path.write_text('', encoding='utf-8')
+    env_path.write_text(
+        'DIALOG_PROVIDER=openai\n'
+        'DIALOG_BASE_URL=https://api.openai.com/v1\n'
+        'DIALOG_MODEL=gpt-4o-mini\n'
+        'KNOWLEDGE_BUILD_PROVIDER=openai\n'
+        'KNOWLEDGE_BUILD_BASE_URL=https://api.openai.com/v1\n'
+        'KNOWLEDGE_BUILD_MODEL=gpt-4o-mini\n',
+        encoding='utf-8',
+    )
 
     original_dialog = settings.dialog_api_key
     original_build = settings.knowledge_build_api_key
@@ -48,14 +56,16 @@ def test_model_config_service_update_config_persists_and_bumps_runtime_version(t
         assert service.get_dialog_config().api_key == 'dialog-hot-reload'
         assert service.get_knowledge_build_config().api_key == 'build-hot-reload'
         assert result.dialog.api_key.masked_value.endswith('load')
-        assert 'DIALOG_API_KEY=dialog-hot-reload' in env_path.read_text(encoding='utf-8')
-        assert 'DIALOG_PROVIDER=deepseek' in env_path.read_text(encoding='utf-8')
-        assert 'DIALOG_BASE_URL=https://api.deepseek.com/v1' in env_path.read_text(encoding='utf-8')
-        assert 'DIALOG_MODEL=deepseek-chat' in env_path.read_text(encoding='utf-8')
-        assert 'KNOWLEDGE_BUILD_API_KEY=build-hot-reload' in env_path.read_text(encoding='utf-8')
-        assert 'KNOWLEDGE_BUILD_PROVIDER=deepseek' in env_path.read_text(encoding='utf-8')
-        assert 'KNOWLEDGE_BUILD_BASE_URL=https://api.deepseek.com/v1' in env_path.read_text(encoding='utf-8')
-        assert 'KNOWLEDGE_BUILD_MODEL=deepseek-chat' in env_path.read_text(encoding='utf-8')
+        env_content = env_path.read_text(encoding='utf-8')
+        assert 'DIALOG_API_KEY=dialog-hot-reload' in env_content
+        assert 'KNOWLEDGE_BUILD_API_KEY=build-hot-reload' in env_content
+        # Saving API keys should not overwrite provider/base_url/model settings.
+        assert 'DIALOG_PROVIDER=openai' in env_content
+        assert 'DIALOG_BASE_URL=https://api.openai.com/v1' in env_content
+        assert 'DIALOG_MODEL=gpt-4o-mini' in env_content
+        assert 'KNOWLEDGE_BUILD_PROVIDER=openai' in env_content
+        assert 'KNOWLEDGE_BUILD_BASE_URL=https://api.openai.com/v1' in env_content
+        assert 'KNOWLEDGE_BUILD_MODEL=gpt-4o-mini' in env_content
     finally:
         settings.dialog_api_key = original_dialog
         settings.knowledge_build_api_key = original_build

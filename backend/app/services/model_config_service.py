@@ -137,18 +137,13 @@ class ModelConfigService:
             )
 
     def update_config(self, payload: ModelConfigUpdate) -> ModelConfigRead:
-        updates = {
-            'DIALOG_PROVIDER': 'deepseek',
-            'DIALOG_BASE_URL': 'https://api.deepseek.com/v1',
-            'DIALOG_MODEL': 'deepseek-chat',
-            'KNOWLEDGE_BUILD_PROVIDER': 'deepseek',
-            'KNOWLEDGE_BUILD_BASE_URL': 'https://api.deepseek.com/v1',
-            'KNOWLEDGE_BUILD_MODEL': 'deepseek-chat',
-        }
+        updates: dict[str, str] = {}
         if payload.dialog_api_key is not None:
             updates['DIALOG_API_KEY'] = payload.dialog_api_key.strip()
         if payload.knowledge_build_api_key is not None:
             updates['KNOWLEDGE_BUILD_API_KEY'] = payload.knowledge_build_api_key.strip()
+        if not updates:
+            return self.get_masked_config()
         self.env_store.update(updates)
         self.reload()
         return self.get_masked_config()
