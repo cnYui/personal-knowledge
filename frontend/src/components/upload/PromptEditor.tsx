@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { useAppToast } from '../common/AppToastProvider'
 import { usePrompt, useResetPrompt, useUpdatePrompt } from '../../hooks/usePrompt'
-import { normalizeApiError } from '../../services/apiClient'
+import { normalizeApiError } from '../../services/http'
 import { unifiedCardSx } from '../../styles/cardStyles'
 
 interface PromptEditorProps {

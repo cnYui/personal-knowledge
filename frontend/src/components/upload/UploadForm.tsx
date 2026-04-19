@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { useAppToast } from '../common/AppToastProvider'
 import { UploadMemoryInput } from '../../types/upload'
-import { normalizeApiError } from '../../services/apiClient'
+import { normalizeApiError } from '../../services/http'
 import { optimizeText } from '../../services/textApi'
 import { unifiedCardSx } from '../../styles/cardStyles'
 import { ImageUploadPanel } from './ImageUploadPanel'

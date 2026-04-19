@@ -1,4 +1,4 @@
-import { http } from './http'
+import { postJson } from './http'
 
 export interface TextOptimizationRequest {
   text: string
@@ -16,7 +16,7 @@ export async function optimizeText(text: string): Promise<string> {
   console.log('[textApi] Text preview:', text.substring(0, 100))
   
   try {
-    const { data } = await http.post<TextOptimizationResponse>('/api/text/optimize', {
+    const data = await postJson<TextOptimizationResponse>('/api/text/optimize', {
       text,
     })
     console.log('[textApi] Optimization success')

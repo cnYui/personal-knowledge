@@ -5,7 +5,7 @@ import { useAppToast } from '../components/common/AppToastProvider'
 import { PromptEditor } from '../components/upload/PromptEditor'
 import { UploadForm } from '../components/upload/UploadForm'
 import { useUploadMemory } from '../hooks/useUploadMemory'
-import { normalizeApiError } from '../services/apiClient'
+import { normalizeApiError } from '../services/http'
 
 export function MemoryUploadPage() {
   const mutation = useUploadMemory()

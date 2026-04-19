@@ -1,6 +1,6 @@
 import { AgentTrace, ChatMessage, ChatReference, ChatTimelineEvent, SentenceCitation } from '../types/chat'
 import { ApiErrorPayload } from '../types/api'
-import { buildApiUrl, createApiError, normalizeApiError } from './apiClient'
+import { buildApiUrl, createApiError, normalizeApiError } from './http'
 
 const CHAT_STORAGE_KEY = 'pkb-chat-messages'
 

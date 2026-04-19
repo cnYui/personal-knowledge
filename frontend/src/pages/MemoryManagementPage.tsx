@@ -15,7 +15,7 @@ import {
   useMemories,
   useUpdateMemory,
 } from '../hooks/useMemories'
-import { normalizeApiError } from '../services/apiClient'
+import { normalizeApiError } from '../services/http'
 import { Memory } from '../types/memory'
 
 function resolveAddToGraphErrorMessage(error: unknown) {
@@ -76,6 +76,7 @@ export function MemoryManagementPage() {
         onAddToGraph={async (memory) => {
           try {
             await addToGraphMutation.mutateAsync(memory)
+            setSelectedMemory(null)
             showToast({ severity: 'success', message: '已加入知识图谱处理队列，正在构建中...' })
           } catch (error) {
             showToast({ severity: 'error', message: resolveAddToGraphErrorMessage(error) })

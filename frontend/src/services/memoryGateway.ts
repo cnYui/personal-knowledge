@@ -1,6 +1,6 @@
 import { mockMemories } from '../mocks/memories'
 import { Memory, MemoryPayload } from '../types/memory'
-import { http } from './http'
+import { deleteVoid, getJson, postJson, putJson } from './http'
 
 type ListMemoriesParams = {
   keyword?: string
@@ -68,26 +68,24 @@ export const mockMemoryGateway: MemoryGateway = {
 }
 
 export const temporalGraphGateway: MemoryGateway = {
-  async listMemories(params) {
-    const { data } = await http.get<Memory[]>('/api/memories', {
+  listMemories(params) {
+    return getJson<Memory[]>('/api/memories', {
       params: {
         keyword: params?.keyword,
       },
     })
-    return data
   },
 
-  async updateMemory(input) {
-    const { data } = await http.put<Memory>(`/api/memories/${input.id}`, input.payload)
-    return data
+  updateMemory(input) {
+    return putJson<Memory>(`/api/memories/${input.id}`, input.payload)
   },
 
   async deleteMemory(id) {
-    await http.delete(`/api/memories/${id}`)
+    await deleteVoid(`/api/memories/${id}`)
   },
 
   async addToKnowledgeGraph(memory) {
-    await http.post(`/api/memories/${memory.id}/add-to-graph`)
+    await postJson(`/api/memories/${memory.id}/add-to-graph`)
   },
 }
 
