@@ -104,9 +104,12 @@
     doubao: ['[data-testid="chat_input_input"]', 'textarea', '[contenteditable="true"]'],
   };
 
-  function detectPlatform(hostname = window.location.hostname) {
+  function detectPlatform(hostname) {
+    const resolvedHostname =
+      hostname != null ? hostname : (typeof window !== 'undefined' ? window.location.hostname : '');
+
     for (const [key, config] of Object.entries(PLATFORM_CONFIG)) {
-      if (config.hostPatterns.some((pattern) => hostname.includes(pattern))) {
+      if (config.hostPatterns.some((pattern) => resolvedHostname.includes(pattern))) {
         return key;
       }
     }
@@ -117,10 +120,49 @@
     return PLATFORM_CONFIG[platformKey]?.name || '未知平台';
   }
 
-  globalThis.JumpAIPlatforms = {
+  function resolvePageContext({ hostname = '', protocol = 'https:' } = {}) {
+    const platformKey = detectPlatform(hostname);
+    if (platformKey) {
+      const platform = PLATFORM_CONFIG[platformKey];
+      return {
+        pageMode: 'platform',
+        platformKey,
+        platformName: platform.name,
+        sourcePlatform: platformKey,
+        themeClass: platform.themeClass || '',
+      };
+    }
+
+    if (protocol === 'http:' || protocol === 'https:') {
+      return {
+        pageMode: 'generic',
+        platformKey: null,
+        platformName: '普通网页',
+        sourcePlatform: 'generic_web',
+        themeClass: 'generic-theme',
+      };
+    }
+
+    return {
+      pageMode: null,
+      platformKey: null,
+      platformName: '',
+      sourcePlatform: '',
+      themeClass: '',
+    };
+  }
+
+  const api = {
     PLATFORM_CONFIG,
     INPUT_SELECTORS,
     detectPlatform,
     getCurrentPlatformName,
+    resolvePageContext,
   };
+
+  globalThis.JumpAIPlatforms = api;
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = api;
+  }
 })();
