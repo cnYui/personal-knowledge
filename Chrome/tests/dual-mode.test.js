@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { detectPlatform, resolvePageContext } = require('../content/platforms.js');
+const { getPanelSectionState } = require('../content/ui.js');
 
 test('resolvePageContext returns platform mode for known AI hosts', () => {
   assert.equal(detectPlatform('chatgpt.com'), 'chatgpt');
@@ -40,4 +41,20 @@ test('manifest injects content scripts into general http and https pages', () =>
   const matches = manifest.content_scripts[0].matches;
   assert.ok(matches.includes('http://*/*'));
   assert.ok(matches.includes('https://*/*'));
+});
+
+test('generic mode hides navigation-only panel sections', () => {
+  assert.deepEqual(getPanelSectionState('platform'), {
+    showJumpButtons: true,
+    showSearch: true,
+    showNavigation: true,
+    showHint: false,
+  });
+
+  assert.deepEqual(getPanelSectionState('generic'), {
+    showJumpButtons: false,
+    showSearch: false,
+    showNavigation: false,
+    showHint: true,
+  });
 });

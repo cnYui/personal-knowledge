@@ -43,6 +43,33 @@
     trigger.style.left = dockedSide === 'left' ? '0px' : `${window.innerWidth - triggerWidth}px`;
   }
 
+  function getPanelSectionState(pageMode) {
+    if (pageMode === 'platform') {
+      return {
+        showJumpButtons: true,
+        showSearch: true,
+        showNavigation: true,
+        showHint: false,
+      };
+    }
+
+    return {
+      showJumpButtons: false,
+      showSearch: false,
+      showNavigation: false,
+      showHint: true,
+    };
+  }
+
+  function applyPanelSectionState(refs, pageMode) {
+    const state = getPanelSectionState(pageMode);
+    refs.panel.dataset.pageMode = pageMode;
+    refs.jumpBtns.style.display = state.showJumpButtons ? 'flex' : 'none';
+    refs.searchWrapper.style.display = state.showSearch ? 'block' : 'none';
+    refs.scrollContainer.style.display = state.showNavigation ? 'block' : 'none';
+    refs.genericHint.style.display = state.showHint ? 'block' : 'none';
+  }
+
   function createPanelShell(themeClass = '') {
     const panel = document.createElement('div');
     panel.id = 'ai-nav-panel';
@@ -92,6 +119,11 @@
     scrollContainer.id = 'ai-nav-scroll';
     panel.appendChild(scrollContainer);
 
+    const genericHint = document.createElement('div');
+    genericHint.id = 'ai-nav-generic-hint';
+    genericHint.textContent = '选中网页中的文字后可直接保存到知识库';
+    panel.appendChild(genericHint);
+
     const saveEntry = document.createElement('button');
     saveEntry.id = 'ai-nav-capture-entry';
     saveEntry.type = 'button';
@@ -119,6 +151,8 @@
       panel,
       jumpTopBtn,
       jumpBottomBtn,
+      jumpBtns,
+      searchWrapper,
       searchInput,
       scrollContainer,
       saveEntry,
@@ -126,6 +160,7 @@
       dragHandle,
       tooltip,
       dockHoverTrigger,
+      genericHint,
     };
   }
 
@@ -212,8 +247,16 @@
     updatePanelPosition,
     updateDockHoverTrigger,
     createPanelShell,
+    getPanelSectionState,
+    applyPanelSectionState,
     refreshCaptureEntry,
     setSaveStatus,
     createPanelInteractionController,
   };
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      getPanelSectionState,
+    };
+  }
 })();

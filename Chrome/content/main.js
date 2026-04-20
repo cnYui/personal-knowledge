@@ -8,7 +8,7 @@
 
   const PKB_CHROME_VERSION = 'minimal-save-v2';
 
-  const { PLATFORM_CONFIG, detectPlatform } = globalThis.JumpAIPlatforms;
+  const { PLATFORM_CONFIG, resolvePageContext } = globalThis.JumpAIPlatforms;
   const {
     scrollPageTo,
     getQuestions,
@@ -32,6 +32,7 @@
     updatePanelPosition: applyPanelPosition,
     updateDockHoverTrigger,
     createPanelShell,
+    applyPanelSectionState,
     refreshCaptureEntry: renderCaptureEntry,
     setSaveStatus: renderSaveStatus,
     createPanelInteractionController,
@@ -43,16 +44,27 @@
   const PANEL_DOCK_TRIGGER_WIDTH = 14;
 
   let currentPlatform = null;
+  let pageMode = null;
+  let pageContext = {
+    pageMode: null,
+    platformKey: null,
+    platformName: '',
+    sourcePlatform: '',
+    themeClass: '',
+  };
   let navPanel = null;
   let jumpTopBtn = null;
   let jumpBottomBtn = null;
+  let jumpBtns = null;
   let saveEntry = null;
   let saveStatus = null;
   let dragHandle = null;
+  let searchWrapper = null;
   let searchInput = null;
   let scrollContainer = null;
   let tooltip = null;
   let dockHoverTrigger = null;
+  let genericHint = null;
 
   let selectedText = '';
   let selectionMeta = null;
@@ -73,9 +85,10 @@
   let currentActiveIndex = -1;
   let lastQuestionCount = 0;
   let currentSearchTerm = '';
+  let navigationRefreshTimer = null;
 
   function getCurrentPlatformName() {
-    return PLATFORM_CONFIG[currentPlatform]?.name || '未知平台';
+    return pageContext.platformName || '普通网页';
   }
 
   function updatePanelPosition() {
@@ -164,7 +177,12 @@
 
   function buildCurrentSelectionMeta() {
     if (!selectedText) return null;
-    return buildSelectionMeta(selectedText, currentPlatform, getCurrentPlatformName(), location.href);
+    return buildSelectionMeta(
+      selectedText,
+      pageContext.sourcePlatform,
+      getCurrentPlatformName(),
+      location.href,
+    );
   }
 
   function getCurrentCaptureDraft() {
@@ -186,11 +204,12 @@
   function createPanel() {
     if (navPanel) return;
 
-    const platform = PLATFORM_CONFIG[currentPlatform];
     ({
       panel: navPanel,
       jumpTopBtn,
       jumpBottomBtn,
+      jumpBtns,
+      searchWrapper,
       searchInput,
       scrollContainer,
       saveEntry,
@@ -198,7 +217,13 @@
       dragHandle,
       tooltip,
       dockHoverTrigger,
-    } = createPanelShell(platform?.themeClass || ''));
+      genericHint,
+    } = createPanelShell(pageContext.themeClass || ''));
+
+    applyPanelSectionState(
+      { panel: navPanel, jumpBtns, searchWrapper, scrollContainer, genericHint },
+      pageMode,
+    );
 
     document.body.appendChild(navPanel);
 
@@ -250,48 +275,50 @@
       finalizeDocking,
     });
 
-    jumpTopBtn.addEventListener('click', () => {
-      scrollPageTo(getQuestions(currentPlatform, PLATFORM_CONFIG), 'top');
-    });
+    if (pageMode === 'platform') {
+      jumpTopBtn.addEventListener('click', () => {
+        scrollPageTo(getQuestions(currentPlatform, PLATFORM_CONFIG), 'top');
+      });
 
-    jumpBottomBtn.addEventListener('click', () => {
-      scrollPageTo(getQuestions(currentPlatform, PLATFORM_CONFIG), 'bottom');
-    });
+      jumpBottomBtn.addEventListener('click', () => {
+        scrollPageTo(getQuestions(currentPlatform, PLATFORM_CONFIG), 'bottom');
+      });
 
-    navigationController = createNavigationController({
-      getScrollContainer: () => scrollContainer,
-      getCurrentActiveIndex: () => currentActiveIndex,
-      setCurrentActiveIndex: (value) => { currentActiveIndex = value; },
-      getCurrentSearchTerm: () => currentSearchTerm.trim().toLowerCase(),
-      getVisibleItems: () => 6,
-      getItemHeight: () => 44,
-      getQuestions: () => getQuestions(currentPlatform, PLATFORM_CONFIG),
-      getQuestionText: (question) => getQuestionText(question, currentPlatform, PLATFORM_CONFIG),
-      activateQuestion: (index, question) => {
-        currentActiveIndex = index;
-        question.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      },
-      showTooltip: (text, item) => {
-        if (!tooltip || !item || !text) return;
-        const rect = item.getBoundingClientRect();
-        tooltip.textContent = text;
-        tooltip.style.display = 'block';
-        tooltip.style.left = `${Math.min(window.innerWidth - 280, rect.left)}px`;
-        tooltip.style.top = `${Math.max(8, rect.top - 36)}px`;
-      },
-      hideTooltip: () => {
-        if (!tooltip) return;
-        tooltip.style.display = 'none';
-      },
-      setLastQuestionCount: (value) => { lastQuestionCount = value; },
-      getLastQuestionCount: () => lastQuestionCount,
-      getNavPanel: () => navPanel,
-    });
+      navigationController = createNavigationController({
+        getScrollContainer: () => scrollContainer,
+        getCurrentActiveIndex: () => currentActiveIndex,
+        setCurrentActiveIndex: (value) => { currentActiveIndex = value; },
+        getCurrentSearchTerm: () => currentSearchTerm.trim().toLowerCase(),
+        getVisibleItems: () => 6,
+        getItemHeight: () => 44,
+        getQuestions: () => getQuestions(currentPlatform, PLATFORM_CONFIG),
+        getQuestionText: (question) => getQuestionText(question, currentPlatform, PLATFORM_CONFIG),
+        activateQuestion: (index, question) => {
+          currentActiveIndex = index;
+          question.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        },
+        showTooltip: (text, item) => {
+          if (!tooltip || !item || !text) return;
+          const rect = item.getBoundingClientRect();
+          tooltip.textContent = text;
+          tooltip.style.display = 'block';
+          tooltip.style.left = `${Math.min(window.innerWidth - 280, rect.left)}px`;
+          tooltip.style.top = `${Math.max(8, rect.top - 36)}px`;
+        },
+        hideTooltip: () => {
+          if (!tooltip) return;
+          tooltip.style.display = 'none';
+        },
+        setLastQuestionCount: (value) => { lastQuestionCount = value; },
+        getLastQuestionCount: () => lastQuestionCount,
+        getNavPanel: () => navPanel,
+      });
 
-    searchInput.addEventListener('input', (event) => {
-      currentSearchTerm = event.target.value || '';
-      navigationController.rebuildNavigation(getQuestions(currentPlatform, PLATFORM_CONFIG), false);
-    });
+      searchInput.addEventListener('input', (event) => {
+        currentSearchTerm = event.target.value || '';
+        navigationController.rebuildNavigation(getQuestions(currentPlatform, PLATFORM_CONFIG), false);
+      });
+    }
 
     function triggerDirectSave(event) {
       event?.preventDefault?.();
@@ -335,19 +362,28 @@
       y: Math.max(24, Math.round(window.innerHeight * 0.16)),
     });
     updatePanelPosition();
-    navigationController.rebuildNavigation(getQuestions(currentPlatform, PLATFORM_CONFIG), false);
-    navigationController.setupScrollObserver();
+    if (pageMode === 'platform') {
+      navigationController.rebuildNavigation(getQuestions(currentPlatform, PLATFORM_CONFIG), false);
+      navigationController.setupScrollObserver();
+    }
     setTimeout(() => ensurePanelVisible(true), 200);
   }
 
   async function init() {
-    currentPlatform = detectPlatform();
-    if (!currentPlatform) {
-      console.log(`[PKB Chrome ${PKB_CHROME_VERSION}] 未识别的平台`);
+    pageContext = resolvePageContext({
+      hostname: location.hostname,
+      protocol: location.protocol,
+    });
+
+    if (!pageContext.pageMode) {
+      console.log(`[PKB Chrome ${PKB_CHROME_VERSION}] 当前页面不支持注入`);
       return;
     }
 
-    console.log(`[PKB Chrome ${PKB_CHROME_VERSION}] 已加载: ${PLATFORM_CONFIG[currentPlatform].name}`);
+    pageMode = pageContext.pageMode;
+    currentPlatform = pageContext.platformKey;
+
+    console.log(`[PKB Chrome ${PKB_CHROME_VERSION}] 已加载: ${getCurrentPlatformName()} (${pageMode})`);
 
     createPanel();
     knowledgeCaptureApiUrl = await loadKnowledgeCaptureApi();
@@ -361,19 +397,25 @@
 
     document.addEventListener('selectionchange', updateSelectionState);
     document.addEventListener('mouseup', () => setTimeout(updateSelectionState, 0));
-    document.addEventListener('keydown', (event) => navigationController?.handleKeyboardShortcut?.(event));
+    if (pageMode === 'platform') {
+      document.addEventListener('keydown', (event) => navigationController?.handleKeyboardShortcut?.(event));
+    }
 
     window.addEventListener('resize', () => ensurePanelVisible(true));
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
         ensurePanelVisible(false);
-        navigationController?.checkForNewMessages?.();
+        if (pageMode === 'platform') {
+          navigationController?.checkForNewMessages?.();
+        }
       }
     });
 
-    window.setInterval(() => {
-      navigationController?.checkForNewMessages?.();
-    }, 1500);
+    if (pageMode === 'platform') {
+      navigationRefreshTimer = window.setInterval(() => {
+        navigationController?.checkForNewMessages?.();
+      }, 1500);
+    }
 
     updateSelectionState();
   }
