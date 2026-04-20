@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { detectPlatform, resolvePageContext } = require('../content/platforms.js');
 
@@ -28,4 +30,14 @@ test('resolvePageContext falls back to generic mode for ordinary webpages', () =
       themeClass: 'generic-theme',
     },
   );
+});
+
+test('manifest injects content scripts into general http and https pages', () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'),
+  );
+
+  const matches = manifest.content_scripts[0].matches;
+  assert.ok(matches.includes('http://*/*'));
+  assert.ok(matches.includes('https://*/*'));
 });
