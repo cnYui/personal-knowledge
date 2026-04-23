@@ -52,6 +52,16 @@ class MemoryRepository:
         rows = db.execute(query)
         return [dict(item._mapping) for item in rows]
 
+    def list_by_entity_keyword(self, db: Session, keyword: str, limit: int = 20) -> list[Memory]:
+        pattern = f'%{keyword}%'
+        query = (
+            select(Memory)
+            .where(or_(Memory.title.ilike(pattern), Memory.content.ilike(pattern)))
+            .order_by(Memory.updated_at.desc(), Memory.created_at.desc())
+            .limit(limit)
+        )
+        return list(db.scalars(query))
+
     def update(self, db: Session, memory: Memory, payload: MemoryUpdate) -> Memory:
         for key, value in payload.model_dump(exclude_none=True).items():
             setattr(memory, key, value)

@@ -178,89 +178,89 @@ class GraphHistoryService:
         )
 
     def _query_memory(self, db, payload: GraphHistoryQuery) -> GraphHistoryResult:
-            memory = self.memory_repository.get(db, payload.target_value)
-            if memory is None:
-                return GraphHistoryResult(
-                    target_type='memory',
-                    target_value=payload.target_value,
-                    mode=payload.mode,
-                    status='not_found',
-                )
-
-            versions = self.episode_repository.list_versions_for_memory(db, memory.id)
-            resolved_target = GraphHistoryResolvedTarget(
-                memory_id=memory.id,
-                memory_title=memory.title,
-                latest_version=versions[0]['version'] if versions else None,
-                version_count=len(versions),
-            )
-            timeline = [
-                GraphHistoryTimelineItem(
-                    version=item['version'],
-                    is_latest=item['is_latest'],
-                    reference_time=item['reference_time'].isoformat() if item['reference_time'] else None,
-                    created_at=item['created_at'].isoformat() if item['created_at'] else None,
-                    episode_count=item['episode_count'],
-                    summary_excerpt=f"{memory.title} v{item['version']}",
-                )
-                for item in versions
-            ]
-
-            if payload.mode == 'timeline':
-                return GraphHistoryResult(
-                    target_type='memory',
-                    target_value=payload.target_value,
-                    mode='timeline',
-                    status='ok',
-                    resolved_target=resolved_target,
-                    timeline=timeline,
-                )
-
-            if len(versions) < 2:
-                warning = '该 memory 暂无图谱历史版本，无法进行历史比较。'
-                if len(versions) == 1:
-                    warning = '该 memory 只有一个版本，无法进行历史比较。'
-
-                return GraphHistoryResult(
-                    target_type='memory',
-                    target_value=payload.target_value,
-                    mode=payload.mode,
-                    status='insufficient_history',
-                    resolved_target=resolved_target,
-                    timeline=timeline,
-                    comparisons=[],
-                    warnings=[warning],
-                )
-
-            latest_version = versions[0]['version']
-            previous_version = versions[1]['version']
-            comparison = GraphHistoryComparisonItem(
-                from_version=previous_version,
-                to_version=latest_version,
-                change_summary=f'从 v{previous_version} 演进到 v{latest_version}',
-                added_points=[f'当前标题：{memory.title}'],
-                removed_points=[],
-                updated_points=[],
+        memory = self.memory_repository.get(db, payload.target_value)
+        if memory is None:
+            return GraphHistoryResult(
+                target_type='memory',
+                target_value=payload.target_value,
+                mode=payload.mode,
+                status='not_found',
             )
 
-            if payload.mode == 'compare':
-                return GraphHistoryResult(
-                    target_type='memory',
-                    target_value=payload.target_value,
-                    mode='compare',
-                    status='ok',
-                    resolved_target=resolved_target,
-                    timeline=timeline,
-                    comparisons=[comparison],
-                )
+        versions = self.episode_repository.list_versions_for_memory(db, memory.id)
+        resolved_target = GraphHistoryResolvedTarget(
+            memory_id=memory.id,
+            memory_title=memory.title,
+            latest_version=versions[0]['version'] if versions else None,
+            version_count=len(versions),
+        )
+        timeline = [
+            GraphHistoryTimelineItem(
+                version=item['version'],
+                is_latest=item['is_latest'],
+                reference_time=item['reference_time'].isoformat() if item['reference_time'] else None,
+                created_at=item['created_at'].isoformat() if item['created_at'] else None,
+                episode_count=item['episode_count'],
+                summary_excerpt=f"{memory.title} v{item['version']}",
+            )
+            for item in versions
+        ]
+
+        if payload.mode == 'timeline':
+            return GraphHistoryResult(
+                target_type='memory',
+                target_value=payload.target_value,
+                mode='timeline',
+                status='ok',
+                resolved_target=resolved_target,
+                timeline=timeline,
+            )
+
+        if len(versions) < 2:
+            warning = '该 memory 暂无图谱历史版本，无法进行历史比较。'
+            if len(versions) == 1:
+                warning = '该 memory 只有一个版本，无法进行历史比较。'
 
             return GraphHistoryResult(
                 target_type='memory',
                 target_value=payload.target_value,
-                mode='summarize',
+                mode=payload.mode,
+                status='insufficient_history',
+                resolved_target=resolved_target,
+                timeline=timeline,
+                comparisons=[],
+                warnings=[warning],
+            )
+
+        latest_version = versions[0]['version']
+        previous_version = versions[1]['version']
+        comparison = GraphHistoryComparisonItem(
+            from_version=previous_version,
+            to_version=latest_version,
+            change_summary=f'从 v{previous_version} 演进到 v{latest_version}',
+            added_points=[f'当前标题：{memory.title}'],
+            removed_points=[],
+            updated_points=[],
+        )
+
+        if payload.mode == 'compare':
+            return GraphHistoryResult(
+                target_type='memory',
+                target_value=payload.target_value,
+                mode='compare',
                 status='ok',
                 resolved_target=resolved_target,
                 timeline=timeline,
                 comparisons=[comparison],
-                summary=f'{memory.title} 共经历 {len(versions)} 个版本，当前为 v{latest_version}。',
             )
+
+        return GraphHistoryResult(
+            target_type='memory',
+            target_value=payload.target_value,
+            mode='summarize',
+            status='ok',
+            resolved_target=resolved_target,
+            timeline=timeline,
+            comparisons=[comparison],
+            summary=f'{memory.title} 共经历 {len(versions)} 个版本，当前为 v{latest_version}。',
+        )

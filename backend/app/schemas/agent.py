@@ -78,6 +78,7 @@ class GraphHistoryResult(BaseModel):
     evidence: list[GraphHistoryEvidenceItem] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
+
 class AgentTraceStep(BaseModel):
     step_type: Literal['retrieval', 'answer', 'fallback']
     query: str = ''

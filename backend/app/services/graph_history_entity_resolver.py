@@ -16,7 +16,6 @@ class GraphHistoryEntityResolver:
     def resolve(self, raw_target: str) -> EntityResolution:
         normalized = raw_target.strip().lower()
         matches: dict[str, str] = {}
-
         for canonical_name, aliases in self.alias_map.items():
             if canonical_name.strip().lower() == normalized:
                 matches.setdefault(canonical_name, canonical_name)

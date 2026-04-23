@@ -124,11 +124,12 @@ def test_query_entity_returns_ambiguous_target_when_resolver_cannot_disambiguate
 
     assert result.status == 'ambiguous_target'
     assert result.resolved_target is not None
+    assert result.resolved_target.canonical_name is None
     assert result.resolved_target.candidate_count == 2
     assert result.timeline == []
 
 
-def test_query_entity_returns_insufficient_evidence_when_no_events_are_found(db_session):
+def test_query_entity_summarize_uses_full_event_count_even_when_top_k_truncates_timeline(db_session):
     service = build_service(
         db_session,
         entity_resolver=GraphHistoryEntityResolver(alias_map={'OpenAI': ['OpenAI']}),
@@ -137,14 +138,34 @@ def test_query_entity_returns_insufficient_evidence_when_no_events_are_found(db_
             episode_repository=MemoryGraphEpisodeRepository(),
         ),
     )
+    memory_a = Memory(title='OpenAI Funding', title_status='ready', content='OpenAI completed funding', group_id='default')
+    memory_b = Memory(title='OpenAI Board', title_status='ready', content='OpenAI board changed', group_id='default')
+    db_session.add_all([memory_a, memory_b])
+    db_session.commit()
+    db_session.add_all(
+        [
+            MemoryGraphEpisode(memory_id=memory_a.id, episode_uuid='openai-funding-v1', version=1, chunk_index=0, is_latest=True),
+            MemoryGraphEpisode(memory_id=memory_b.id, episode_uuid='openai-board-v2', version=2, chunk_index=0, is_latest=True),
+        ]
+    )
+    db_session.commit()
 
     result = service.query(
-        GraphHistoryQuery(target_type='entity', target_value='OpenAI', mode='timeline', question='实体历史？')
+        GraphHistoryQuery(
+            target_type='entity',
+            target_value='OpenAI',
+            mode='summarize',
+            question='总结这个实体的历史',
+            constraints={'top_k_events': 1},
+        )
     )
 
-    assert result.status == 'insufficient_evidence'
+    assert result.status == 'ok'
     assert result.resolved_target is not None
     assert result.resolved_target.canonical_name == 'OpenAI'
+    assert result.resolved_target.version_count == 2
+    assert len(result.timeline) == 1
+    assert result.summary == 'OpenAI 共关联 2 条历史事件。'
 
 
 def test_query_entity_compare_requires_at_least_two_events(db_session):
@@ -169,7 +190,141 @@ def test_query_entity_compare_requires_at_least_two_events(db_session):
     )
 
     assert result.status == 'insufficient_history'
+    assert result.resolved_target is not None
+    assert result.resolved_target.canonical_name == 'OpenAI'
+    assert result.resolved_target.version_count == 1
+    assert len(result.timeline) == 1
+    assert result.timeline[0].summary_excerpt == 'OpenAI Funding v1'
     assert result.comparisons == []
+
+
+def test_query_entity_compare_returns_comparison_for_latest_two_events(db_session):
+    service = build_service(
+        db_session,
+        entity_resolver=GraphHistoryEntityResolver(alias_map={'OpenAI': ['OpenAI', 'Open AI']}),
+        entity_aggregator=GraphHistoryEntityAggregator(
+            memory_repository=MemoryRepository(),
+            episode_repository=MemoryGraphEpisodeRepository(),
+        ),
+    )
+    memory_a = Memory(title='OpenAI Funding', title_status='ready', content='OpenAI completed funding', group_id='default')
+    memory_b = Memory(title='OpenAI Board', title_status='ready', content='OpenAI board changed', group_id='default')
+    db_session.add_all([memory_a, memory_b])
+    db_session.commit()
+    db_session.add_all(
+        [
+            MemoryGraphEpisode(memory_id=memory_a.id, episode_uuid='openai-funding-v1', version=1, chunk_index=0, is_latest=True),
+            MemoryGraphEpisode(memory_id=memory_b.id, episode_uuid='openai-board-v2', version=2, chunk_index=0, is_latest=True),
+        ]
+    )
+    db_session.commit()
+
+    result = service.query(
+        GraphHistoryQuery(target_type='entity', target_value='Open AI', mode='compare', question='比较历史')
+    )
+
+    assert result.status == 'ok'
+    assert result.resolved_target is not None
+    assert result.resolved_target.canonical_name == 'OpenAI'
+    assert result.resolved_target.matched_alias == 'Open AI'
+    assert result.resolved_target.version_count == 2
+    assert len(result.timeline) == 2
+    assert len(result.comparisons) == 1
+    assert result.comparisons[0].from_version == 1
+    assert result.comparisons[0].to_version == 2
+    assert result.comparisons[0].change_summary == '从 v1 演进到 v2'
+
+
+def test_query_entity_summarize_counts_events_across_more_than_ten_matching_memories(db_session):
+    service = build_service(
+        db_session,
+        entity_resolver=GraphHistoryEntityResolver(alias_map={'OpenAI': ['OpenAI']}),
+        entity_aggregator=GraphHistoryEntityAggregator(
+            memory_repository=MemoryRepository(),
+            episode_repository=MemoryGraphEpisodeRepository(),
+        ),
+    )
+    memories = [
+        Memory(
+            title=f'OpenAI Note {index}',
+            title_status='ready',
+            content=f'OpenAI event {index}',
+            group_id='default',
+        )
+        for index in range(11)
+    ]
+    db_session.add_all(memories)
+    db_session.commit()
+    db_session.add_all(
+        [
+            MemoryGraphEpisode(
+                memory_id=memory.id,
+                episode_uuid=f'openai-note-v{index + 1}',
+                version=index + 1,
+                chunk_index=0,
+                is_latest=True,
+            )
+            for index, memory in enumerate(memories)
+        ]
+    )
+    db_session.commit()
+
+    result = service.query(
+        GraphHistoryQuery(
+            target_type='entity',
+            target_value='OpenAI',
+            mode='summarize',
+            question='总结这个实体的历史',
+            constraints={'top_k_events': 1},
+        )
+    )
+
+    assert result.status == 'ok'
+    assert result.resolved_target is not None
+    assert result.resolved_target.canonical_name == 'OpenAI'
+    assert result.resolved_target.version_count == 11
+    assert len(result.timeline) == 1
+    assert result.summary == 'OpenAI 共关联 11 条历史事件。'
+
+
+def test_query_entity_returns_not_found_when_resolver_cannot_match_target(db_session):
+    service = build_service(
+        db_session,
+        entity_resolver=GraphHistoryEntityResolver(alias_map={'OpenAI': ['OpenAI']}),
+        entity_aggregator=GraphHistoryEntityAggregator(
+            memory_repository=MemoryRepository(),
+            episode_repository=MemoryGraphEpisodeRepository(),
+        ),
+    )
+
+    result = service.query(
+        GraphHistoryQuery(target_type='entity', target_value='Anthropic', mode='timeline', question='实体历史？')
+    )
+
+    assert result.status == 'not_found'
+    assert result.resolved_target is None
+    assert result.timeline == []
+
+
+def test_query_entity_returns_insufficient_evidence_when_no_events_are_found(db_session):
+    service = build_service(
+        db_session,
+        entity_resolver=GraphHistoryEntityResolver(alias_map={'OpenAI': ['OpenAI']}),
+        entity_aggregator=GraphHistoryEntityAggregator(
+            memory_repository=MemoryRepository(),
+            episode_repository=MemoryGraphEpisodeRepository(),
+        ),
+    )
+
+    result = service.query(
+        GraphHistoryQuery(target_type='entity', target_value='OpenAI', mode='timeline', question='实体历史？')
+    )
+
+    assert result.status == 'insufficient_evidence'
+    assert result.resolved_target is not None
+    assert result.resolved_target.canonical_name == 'OpenAI'
+    assert result.resolved_target.matched_alias == 'OpenAI'
+    assert result.timeline == []
 
 
 def test_graph_history_service_supports_relation_topic_summarize():
