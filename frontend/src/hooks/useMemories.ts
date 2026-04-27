@@ -9,11 +9,18 @@ import {
 
 const MEMORY_POLLING_INTERVAL_MS = Number(import.meta.env.VITE_MEMORIES_POLLING_MS ?? 5000)
 
-export function useMemories(keyword?: string) {
+type UseMemoriesOptions = {
+  enabled?: boolean
+}
+
+export function useMemories(keyword?: string, options?: UseMemoriesOptions) {
+  const enabled = options?.enabled ?? true
+
   return useQuery({
     queryKey: ['memories', keyword],
     queryFn: () => listMemories({ keyword }),
-    refetchInterval: MEMORY_POLLING_INTERVAL_MS,
+    enabled,
+    refetchInterval: enabled ? MEMORY_POLLING_INTERVAL_MS : false,
   })
 }
 

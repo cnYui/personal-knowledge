@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PropsWithChildren, useState } from 'react'
 
 import { AppToastProvider } from '../components/common/AppToastProvider'
+import { GraphRefreshCoordinatorProvider } from '../hooks/useGraphRefreshCoordinator'
 
 export function AppProviders({ children }: PropsWithChildren) {
   const [queryClient] = useState(() => new QueryClient())
@@ -177,12 +178,14 @@ export function AppProviders({ children }: PropsWithChildren) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider theme={theme}>
-        <AppToastProvider>
-          <CssBaseline />
-          {children}
-        </AppToastProvider>
-      </ThemeProvider>
+      <GraphRefreshCoordinatorProvider>
+        <ThemeProvider theme={theme}>
+          <AppToastProvider>
+            <CssBaseline />
+            {children}
+          </AppToastProvider>
+        </ThemeProvider>
+      </GraphRefreshCoordinatorProvider>
     </QueryClientProvider>
   )
 }
