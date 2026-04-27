@@ -19,7 +19,7 @@ export default defineConfig({
             return
           }
 
-          if (id.indexOf('reactflow') !== -1) {
+          if (id.indexOf('sigma') !== -1 || id.indexOf('graphology') !== -1) {
             return 'graph-vendor'
           }
 

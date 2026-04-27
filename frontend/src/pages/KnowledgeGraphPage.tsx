@@ -8,8 +8,10 @@ import { NodeDetailPanel } from '../components/graph/NodeDetailPanel'
 import { useGraphData } from '../hooks/useGraph'
 import { GraphNode } from '../types/graph'
 
+const DEFAULT_GRAPH_EDGE_LIMIT = 1000
+
 export function KnowledgeGraphPage() {
-  const { data, isLoading, isError } = useGraphData('default', 50)
+  const { data, isLoading, isError } = useGraphData('default', DEFAULT_GRAPH_EDGE_LIMIT)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
 
   const selectedNode: GraphNode | null =

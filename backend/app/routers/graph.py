@@ -10,7 +10,7 @@ service = GraphVisualizationService()
 
 
 @router.get('/data', response_model=GraphData)
-async def get_graph_data(group_id: str = 'default', limit: int = 50) -> GraphData:
+async def get_graph_data(group_id: str = 'default', limit: int = 1000) -> GraphData:
     """
     Get graph data for visualization.
 
