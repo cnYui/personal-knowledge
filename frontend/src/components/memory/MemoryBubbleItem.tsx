@@ -85,6 +85,7 @@ export function MemoryBubbleItem({
             px: 2,
             py: 1.65,
             cursor: 'pointer',
+            width: '100%',
             maxWidth: { xs: '100%', md: '82%' },
             border: '1px solid',
             borderColor: memory.graph_status === 'added' ? 'rgba(120, 140, 93, 0.42)' : 'divider',
