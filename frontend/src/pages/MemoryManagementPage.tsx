@@ -9,7 +9,7 @@ import { MemoryBubbleList } from '../components/memory/MemoryBubbleList'
 import { MemoryDetailDialog } from '../components/memory/MemoryDetailDialog'
 import { MemoryEditDialog } from '../components/memory/MemoryEditDialog'
 import { MemoryFilterBar } from '../components/memory/MemoryFilterBar'
-import { createTrackMemoryHandler, useGraphRefreshCoordinator } from '../hooks/useGraphRefreshCoordinator'
+import { useGraphRefreshCoordinator } from '../hooks/useGraphRefreshCoordinator'
 import {
   useAddMemoryToKnowledgeGraph,
   useDeleteMemory,
@@ -77,7 +77,8 @@ export function MemoryManagementPage() {
         }}
         onAddToGraph={async (memory) => {
           try {
-            await createTrackMemoryHandler(trackMemory, addToGraphMutation.mutateAsync)(memory)
+            await addToGraphMutation.mutateAsync(memory)
+            trackMemory(memory.id)
             setSelectedMemory(null)
             showToast({ severity: 'success', message: '已加入知识图谱处理队列，正在构建中...' })
           } catch (error) {

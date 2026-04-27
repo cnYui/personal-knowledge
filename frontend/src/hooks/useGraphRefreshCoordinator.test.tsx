@@ -10,7 +10,6 @@ vi.mock('./useMemories', () => ({
 import { useMemories } from './useMemories'
 
 import {
-  createTrackMemoryHandler,
   createGraphRefreshTracker,
   GraphRefreshCoordinatorProvider,
   handleTrackedMemoryUpdates,
@@ -290,18 +289,5 @@ describe('handleTrackedMemoryUpdates', () => {
     expect(result.shouldRefreshGraph).toBe(false)
     expect(result.resolvedIds).toEqual([])
     expect(invalidateQueries).not.toHaveBeenCalled()
-  })
-})
-
-describe('createTrackMemoryHandler', () => {
-  it('入图请求成功后注册待观察 memory', async () => {
-    const trackMemory = vi.fn()
-    const addToGraph = vi.fn().mockResolvedValue(undefined)
-    const handler = createTrackMemoryHandler(trackMemory, addToGraph)
-
-    await handler({ id: 'mem-1' })
-
-    expect(addToGraph).toHaveBeenCalledWith({ id: 'mem-1' })
-    expect(trackMemory).toHaveBeenCalledWith('mem-1')
   })
 })
