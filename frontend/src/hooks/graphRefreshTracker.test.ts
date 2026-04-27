@@ -1,7 +1,7 @@
-import { QueryClient } from '@tanstack/react-query'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import { createGraphRefreshTracker, handleTrackedMemoryUpdates } from './graphRefreshTracker'
+import * as graphRefreshTrackerModule from './graphRefreshTracker'
+import { createGraphRefreshTracker } from './graphRefreshTracker'
 
 type MemoryGraphState = {
   id: string
@@ -9,6 +9,10 @@ type MemoryGraphState = {
 }
 
 describe('createGraphRefreshTracker', () => {
+  it('只导出纯 tracker 能力', () => {
+    expect(graphRefreshTrackerModule).not.toHaveProperty('handleTrackedMemoryUpdates')
+  })
+
   it('pending 进入 added 时返回刷新标记并清理对应 memory', () => {
     const tracker = createGraphRefreshTracker()
 
@@ -84,49 +88,5 @@ describe('createGraphRefreshTracker', () => {
     expect(mixedResult.resolvedIds).toEqual(['mem-1', 'mem-3'])
     expect(pendingFollowUpResult.shouldRefreshGraph).toBe(true)
     expect(pendingFollowUpResult.resolvedIds).toEqual(['mem-2'])
-  })
-})
-
-describe('handleTrackedMemoryUpdates', () => {
-  it('tracked memory 进入 added 时触发 graph-data 失效', async () => {
-    const queryClient = new QueryClient()
-    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
-
-    await handleTrackedMemoryUpdates({
-      queryClient,
-      trackedIds: new Set(['mem-1']),
-      memories: [{ id: 'mem-1', graph_status: 'added' }],
-    })
-
-    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['graph-data'] })
-  })
-
-  it('pending 不触发 graph-data 刷新', async () => {
-    const queryClient = new QueryClient()
-    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
-
-    const result = await handleTrackedMemoryUpdates({
-      queryClient,
-      trackedIds: new Set(['mem-1']),
-      memories: [{ id: 'mem-1', graph_status: 'pending' }],
-    })
-
-    expect(result.shouldRefreshGraph).toBe(false)
-    expect(invalidateQueries).not.toHaveBeenCalled()
-  })
-
-  it('没有 tracked memory 时不会触发 graph-data 刷新逻辑', async () => {
-    const queryClient = new QueryClient()
-    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
-
-    const result = await handleTrackedMemoryUpdates({
-      queryClient,
-      trackedIds: new Set(),
-      memories: [{ id: 'mem-1', graph_status: 'added' }],
-    })
-
-    expect(result.shouldRefreshGraph).toBe(false)
-    expect(result.resolvedIds).toEqual([])
-    expect(invalidateQueries).not.toHaveBeenCalled()
   })
 })

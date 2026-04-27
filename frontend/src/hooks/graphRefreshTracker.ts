@@ -1,5 +1,3 @@
-import { QueryClient } from '@tanstack/react-query'
-
 type MemoryGraphState = {
   id: string
   graph_status?: string | null
@@ -47,23 +45,4 @@ export function createGraphRefreshTracker(pendingIds: Set<string> = new Set<stri
       }
     },
   }
-}
-
-export async function handleTrackedMemoryUpdates({
-  queryClient,
-  trackedIds,
-  memories,
-}: {
-  queryClient: QueryClient
-  trackedIds: Set<string>
-  memories: MemoryGraphState[]
-}) {
-  const tracker = createGraphRefreshTracker(trackedIds)
-  const result = tracker.consume(memories)
-
-  if (result.shouldRefreshGraph) {
-    await queryClient.invalidateQueries({ queryKey: ['graph-data'] })
-  }
-
-  return result
 }
