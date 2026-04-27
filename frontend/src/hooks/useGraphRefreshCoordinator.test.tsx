@@ -20,6 +20,13 @@ type MemoryGraphState = {
 }
 
 const useMemoriesMock = vi.mocked(useMemories)
+const reactActEnvironment = globalThis as typeof globalThis & {
+  IS_REACT_ACT_ENVIRONMENT?: boolean
+}
+
+function getLastCall<T>(calls: T[]) {
+  return calls[calls.length - 1]
+}
 
 function TrackMemoryOnMount({ memoryId }: { memoryId: string }) {
   const { trackMemory } = useGraphRefreshCoordinator()
@@ -48,7 +55,7 @@ describe('GraphRefreshCoordinatorProvider', () => {
   let root: Root | null = null
 
   beforeEach(() => {
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true
     container = document.createElement('div')
     document.body.appendChild(container)
     useMemoriesMock.mockReset()
@@ -63,7 +70,7 @@ describe('GraphRefreshCoordinatorProvider', () => {
     }
 
     container.remove()
-    delete globalThis.IS_REACT_ACT_ENVIRONMENT
+    delete reactActEnvironment.IS_REACT_ACT_ENVIRONMENT
   })
 
   it('只在存在 tracked memory 时启用 memories 查询，并在消费完成后停止', async () => {
@@ -95,7 +102,7 @@ describe('GraphRefreshCoordinatorProvider', () => {
 
     expect(useMemoriesMock.mock.calls[0]).toEqual([undefined, { enabled: false }])
     expect(useMemoriesMock.mock.calls).toContainEqual([undefined, { enabled: true }])
-    expect(useMemoriesMock.mock.calls.at(-1)).toEqual([undefined, { enabled: false }])
+    expect(getLastCall(useMemoriesMock.mock.calls)).toEqual([undefined, { enabled: false }])
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['graph-data'] })
   })
 
@@ -149,7 +156,7 @@ describe('GraphRefreshCoordinatorProvider', () => {
       await Promise.resolve()
     })
 
-    expect(useMemoriesMock.mock.calls.at(-1)).toEqual([undefined, { enabled: true }])
+    expect(getLastCall(useMemoriesMock.mock.calls)).toEqual([undefined, { enabled: true }])
 
     currentMemories = [{ id: 'mem-2', graph_status: 'added' }]
 
