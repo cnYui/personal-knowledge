@@ -1,15 +1,94 @@
-import { QueryClient } from '@tanstack/react-query'
-import { describe, expect, it, vi } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, useEffect } from 'react'
+import { createRoot, Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('./useMemories', () => ({
+  useMemories: vi.fn(),
+}))
+
+import { useMemories } from './useMemories'
 
 import {
   createGraphRefreshTracker,
+  GraphRefreshCoordinatorProvider,
   handleTrackedMemoryUpdates,
+  useGraphRefreshCoordinator,
 } from './useGraphRefreshCoordinator'
 
 type MemoryGraphState = {
   id: string
   graph_status?: string | null
 }
+
+const useMemoriesMock = vi.mocked(useMemories)
+
+function TrackMemoryOnMount({ memoryId }: { memoryId: string }) {
+  const { trackMemory } = useGraphRefreshCoordinator()
+
+  useEffect(() => {
+    trackMemory(memoryId)
+  }, [memoryId, trackMemory])
+
+  return null
+}
+
+describe('GraphRefreshCoordinatorProvider', () => {
+  let container: HTMLDivElement
+  let root: Root | null = null
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    useMemoriesMock.mockReset()
+  })
+
+  afterEach(async () => {
+    if (root) {
+      await act(async () => {
+        root?.unmount()
+      })
+      root = null
+    }
+
+    container.remove()
+    delete globalThis.IS_REACT_ACT_ENVIRONMENT
+  })
+
+  it('只在存在 tracked memory 时启用 memories 查询，并在消费完成后停止', async () => {
+    const queryClient = new QueryClient()
+    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
+    const memories: MemoryGraphState[] = [{ id: 'mem-1', graph_status: 'added' }]
+
+    useMemoriesMock.mockImplementation(((...args: unknown[]) => {
+      const options = args[1] as { enabled?: boolean } | undefined
+
+      return {
+        data: options?.enabled ? memories : [],
+      }
+    }) as never)
+
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <GraphRefreshCoordinatorProvider>
+            <TrackMemoryOnMount memoryId="mem-1" />
+          </GraphRefreshCoordinatorProvider>
+        </QueryClientProvider>,
+      )
+    })
+
+    await act(async () => {})
+
+    expect(useMemoriesMock.mock.calls[0]).toEqual([undefined, { enabled: false }])
+    expect(useMemoriesMock.mock.calls).toContainEqual([undefined, { enabled: true }])
+    expect(useMemoriesMock.mock.calls.at(-1)).toEqual([undefined, { enabled: false }])
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['graph-data'] })
+  })
+})
 
 describe('createGraphRefreshTracker', () => {
   it('pending 进入 added 时返回刷新标记并清理对应 memory', () => {
@@ -115,6 +194,21 @@ describe('handleTrackedMemoryUpdates', () => {
     })
 
     expect(result.shouldRefreshGraph).toBe(false)
+    expect(invalidateQueries).not.toHaveBeenCalled()
+  })
+
+  it('没有 tracked memory 时不会触发 graph-data 刷新逻辑', async () => {
+    const queryClient = new QueryClient()
+    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
+
+    const result = await handleTrackedMemoryUpdates({
+      queryClient,
+      trackedIds: new Set(),
+      memories: [{ id: 'mem-1', graph_status: 'added' }],
+    })
+
+    expect(result.shouldRefreshGraph).toBe(false)
+    expect(result.resolvedIds).toEqual([])
     expect(invalidateQueries).not.toHaveBeenCalled()
   })
 })

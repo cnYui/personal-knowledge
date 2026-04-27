@@ -1,5 +1,16 @@
 import { QueryClient, useQueryClient } from '@tanstack/react-query'
-import { createContext, createElement, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef } from 'react'
+import {
+  createContext,
+  createElement,
+  MutableRefObject,
+  PropsWithChildren,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 
 import { useMemories } from './useMemories'
 
@@ -11,6 +22,7 @@ type MemoryGraphState = {
 type GraphRefreshConsumeResult = {
   shouldRefreshGraph: boolean
   resolvedIds: string[]
+  remainingTrackedCount: number
 }
 
 type GraphRefreshCoordinatorContextValue = {
@@ -51,6 +63,7 @@ export function createGraphRefreshTracker(pendingIds: Set<string> = new Set<stri
       return {
         shouldRefreshGraph,
         resolvedIds,
+        remainingTrackedCount: trackedPendingIds.size,
       }
     },
   }
@@ -76,25 +89,17 @@ export async function handleTrackedMemoryUpdates({
 }
 
 export function GraphRefreshCoordinatorProvider({ children }: PropsWithChildren) {
-  const queryClient = useQueryClient()
   const trackedIdsRef = useRef(new Set<string>())
-  const { data: memories = [] } = useMemories()
+  const [trackedCount, setTrackedCount] = useState(0)
 
   const trackMemory = useCallback((memoryId: string) => {
-    trackedIdsRef.current.add(memoryId)
-  }, [])
-
-  useEffect(() => {
-    if (trackedIdsRef.current.size === 0 || memories.length === 0) {
+    if (trackedIdsRef.current.has(memoryId)) {
       return
     }
 
-    void handleTrackedMemoryUpdates({
-      queryClient,
-      trackedIds: trackedIdsRef.current,
-      memories,
-    })
-  }, [memories, queryClient])
+    trackedIdsRef.current.add(memoryId)
+    setTrackedCount(trackedIdsRef.current.size)
+  }, [])
 
   const value = useMemo<GraphRefreshCoordinatorContextValue>(
     () => ({
@@ -103,7 +108,16 @@ export function GraphRefreshCoordinatorProvider({ children }: PropsWithChildren)
     [trackMemory],
   )
 
-  return createElement(GraphRefreshCoordinatorContext.Provider, { value }, children)
+  return createElement(
+    GraphRefreshCoordinatorContext.Provider,
+    { value },
+    children,
+    createElement(GraphRefreshCoordinatorEffect, {
+      trackedCount,
+      trackedIdsRef,
+      onTrackedCountChange: setTrackedCount,
+    }),
+  )
 }
 
 export function useGraphRefreshCoordinator() {
@@ -114,4 +128,36 @@ export function useGraphRefreshCoordinator() {
   }
 
   return context
+}
+
+function GraphRefreshCoordinatorEffect({
+  trackedCount,
+  trackedIdsRef,
+  onTrackedCountChange,
+}: {
+  trackedCount: number
+  trackedIdsRef: MutableRefObject<Set<string>>
+  onTrackedCountChange: (count: number) => void
+}) {
+  const queryClient = useQueryClient()
+  const hasTrackedMemories = trackedCount > 0
+  const { data: memories = [] } = useMemories(undefined, { enabled: hasTrackedMemories })
+
+  useEffect(() => {
+    if (!hasTrackedMemories || memories.length === 0) {
+      return
+    }
+
+    void handleTrackedMemoryUpdates({
+      queryClient,
+      trackedIds: trackedIdsRef.current,
+      memories,
+    }).then((result) => {
+      if (result.remainingTrackedCount !== trackedCount) {
+        onTrackedCountChange(result.remainingTrackedCount)
+      }
+    })
+  }, [hasTrackedMemories, memories, onTrackedCountChange, queryClient, trackedCount, trackedIdsRef])
+
+  return null
 }
