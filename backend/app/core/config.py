@@ -1,8 +1,11 @@
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ENV_FILE_PATH = Path(__file__).resolve().parents[2] / '.env'
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = BACKEND_DIR.parent
+ENV_FILE_PATH = Path(os.environ.get('PKB_ENV_FILE', PROJECT_ROOT / '.env')).expanduser().resolve()
 
 
 class Settings(BaseSettings):
