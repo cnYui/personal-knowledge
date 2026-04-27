@@ -88,6 +88,18 @@ export async function handleTrackedMemoryUpdates({
   return result
 }
 
+function consumeTrackedMemoryUpdates({
+  trackedIds,
+  memories,
+}: {
+  trackedIds: Set<string>
+  memories: MemoryGraphState[]
+}) {
+  const tracker = createGraphRefreshTracker(trackedIds)
+
+  return tracker.consume(memories)
+}
+
 export function GraphRefreshCoordinatorProvider({ children }: PropsWithChildren) {
   const trackedIdsRef = useRef(new Set<string>())
   const [trackedCount, setTrackedCount] = useState(0)
@@ -148,16 +160,17 @@ function GraphRefreshCoordinatorEffect({
       return
     }
 
-    void handleTrackedMemoryUpdates({
-      queryClient,
+    const result = consumeTrackedMemoryUpdates({
       trackedIds: trackedIdsRef.current,
       memories,
-    }).then((result) => {
-      if (result.remainingTrackedCount !== trackedCount) {
-        onTrackedCountChange(result.remainingTrackedCount)
-      }
     })
-  }, [hasTrackedMemories, memories, onTrackedCountChange, queryClient, trackedCount, trackedIdsRef])
+
+    onTrackedCountChange(trackedIdsRef.current.size)
+
+    if (result.shouldRefreshGraph) {
+      void queryClient.invalidateQueries({ queryKey: ['graph-data'] })
+    }
+  }, [hasTrackedMemories, memories, onTrackedCountChange, queryClient, trackedIdsRef])
 
   return null
 }
