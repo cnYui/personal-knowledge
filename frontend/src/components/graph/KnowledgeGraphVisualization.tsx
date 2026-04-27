@@ -8,6 +8,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Sigma from 'sigma'
 
 import { GraphData } from '../../types/graph'
+import {
+  buildNodeVisualMeta,
+  computeDegreeThresholds,
+  type DegreeThresholds,
+  shouldShowNodeLabel,
+} from './graphVisualRules'
 
 const ENTITY_COLOR = '#da6f4d'
 const EPISODE_COLOR = '#707be6'
@@ -18,6 +24,7 @@ const DEFAULT_EDGE_COLOR = '#c3beb4'
 const HOVER_EDGE_COLOR = '#96a1ff'
 const SELECTED_EDGE_COLOR = '#d97757'
 const LAYOUT_ITERATIONS = 220
+const FALLBACK_NODE_SIZE = 5
 
 interface SigmaNodeAttributes {
   x: number
@@ -57,12 +64,8 @@ function ringPosition(index: number, count: number, radius: number, offset: numb
 
 function buildSigmaGraph(data: GraphData) {
   const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>({ multi: true, type: 'directed' })
-  const degreeMap = new Map<string, number>(data.nodes.map((node) => [node.id, 0]))
-
-  data.edges.forEach((edge) => {
-    degreeMap.set(edge.source, (degreeMap.get(edge.source) ?? 0) + 1)
-    degreeMap.set(edge.target, (degreeMap.get(edge.target) ?? 0) + 1)
-  })
+  const { degreeMap, sizeMap } = buildNodeVisualMeta(data.nodes, data.edges)
+  const thresholds = computeDegreeThresholds(Array.from(degreeMap.values()))
 
   const connectedNodes = data.nodes.filter((node) => (degreeMap.get(node.id) ?? 0) > 0)
   const connectedEntities = connectedNodes.filter((node) => node.type === 'entity')
@@ -78,11 +81,11 @@ function buildSigmaGraph(data: GraphData) {
     const position = ringPosition(index, connectedEntities.length, entityRadius, -Math.PI / 2)
     graph.addNode(node.id, {
       ...position,
-      size: 8 + Math.min(degree, 10) * 0.55,
+      size: sizeMap.get(node.id) ?? FALLBACK_NODE_SIZE,
       label: node.label,
       color: ENTITY_COLOR,
       type: 'circle',
-      forceLabel: degree >= 16,
+      forceLabel: false,
       zIndex: degree,
     })
   })
@@ -92,11 +95,11 @@ function buildSigmaGraph(data: GraphData) {
     const position = ringPosition(index, episodes.length, episodeRadius, Math.PI / 8)
     graph.addNode(node.id, {
       ...position,
-      size: 6.2 + Math.min(degree, 8) * 0.35,
+      size: sizeMap.get(node.id) ?? FALLBACK_NODE_SIZE,
       label: node.label,
       color: EPISODE_COLOR,
       type: 'circle',
-      forceLabel: degree >= 10,
+      forceLabel: false,
       zIndex: degree,
     })
   })
@@ -105,7 +108,7 @@ function buildSigmaGraph(data: GraphData) {
     const position = ringPosition(index, isolatedNodes.length, isolatedRadius, Math.PI / 4)
     graph.addNode(node.id, {
       ...position,
-      size: node.type === 'episode' ? 6 : 7.2,
+      size: sizeMap.get(node.id) ?? FALLBACK_NODE_SIZE,
       label: node.label,
       color: ISOLATED_COLOR,
       type: 'circle',
@@ -159,14 +162,16 @@ function buildSigmaGraph(data: GraphData) {
     })
   }
 
-  return { graph, degreeMap }
+  return { graph, degreeMap, thresholds }
 }
 
 function buildNodeReducer(
   graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
   degreeMap: Map<string, number>,
+  thresholds: DegreeThresholds,
   selectedNodeId: string | null,
-  hoveredNodeId: string | null
+  hoveredNodeId: string | null,
+  zoomRatio: number
 ) {
   const activeNodeId = selectedNodeId ?? hoveredNodeId
   const neighborhood = activeNodeId ? new Set([activeNodeId, ...graph.neighbors(activeNodeId)]) : null
@@ -176,6 +181,14 @@ function buildNodeReducer(
     const isSelected = selectedNodeId === nodeId
     const isHovered = hoveredNodeId === nodeId
     const isInNeighborhood = neighborhood?.has(nodeId) ?? false
+    const showLabel = shouldShowNodeLabel({
+      degree,
+      zoomRatio,
+      thresholds,
+      isHovered,
+      isSelected,
+      isNeighbor: isInNeighborhood,
+    })
 
     if (!activeNodeId) {
       return {
@@ -183,7 +196,7 @@ function buildNodeReducer(
         color: attributes.color,
         size: attributes.size,
         highlighted: false,
-        forceLabel: attributes.forceLabel,
+        forceLabel: showLabel,
         zIndex: attributes.zIndex ?? 0,
       }
     }
@@ -194,7 +207,7 @@ function buildNodeReducer(
         color: SELECTED_EDGE_COLOR,
         size: attributes.size + 2.4,
         highlighted: true,
-        forceLabel: true,
+        forceLabel: showLabel,
         zIndex: 100,
       }
     }
@@ -205,7 +218,7 @@ function buildNodeReducer(
         color: HOVER_EDGE_COLOR,
         size: attributes.size + 1.6,
         highlighted: true,
-        forceLabel: true,
+        forceLabel: showLabel,
         zIndex: 90,
       }
     }
@@ -216,7 +229,7 @@ function buildNodeReducer(
         color: attributes.color,
         size: attributes.size + Math.min(degree * 0.08, 0.8),
         highlighted: false,
-        forceLabel: degree >= 4,
+        forceLabel: showLabel,
         zIndex: 70,
       }
     }
@@ -294,8 +307,9 @@ export function KnowledgeGraphVisualization({ data, selectedNodeId = null, onNod
   const containerRef = useRef<HTMLDivElement | null>(null)
   const rendererRef = useRef<Sigma<SigmaNodeAttributes, SigmaEdgeAttributes> | null>(null)
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
+  const [zoomRatio, setZoomRatio] = useState(1)
 
-  const { graph, degreeMap } = useMemo(() => buildSigmaGraph(data), [data])
+  const { graph, degreeMap, thresholds } = useMemo(() => buildSigmaGraph(data), [data])
 
   useEffect(() => {
     const container = containerRef.current
@@ -319,11 +333,15 @@ export function KnowledgeGraphVisualization({ data, selectedNodeId = null, onNod
       maxCameraRatio: 4,
       zIndex: true,
       hideEdgesOnMove: true,
-      nodeReducer: buildNodeReducer(graph, degreeMap, selectedNodeId, hoveredNodeId),
+      nodeReducer: buildNodeReducer(graph, degreeMap, thresholds, selectedNodeId, hoveredNodeId, zoomRatio),
       edgeReducer: buildEdgeReducer(graph, selectedNodeId, hoveredNodeId),
     })
 
     rendererRef.current = renderer
+    const camera = renderer.getCamera()
+    const handleCameraUpdated = () => {
+      setZoomRatio(camera.ratio)
+    }
 
     renderer.on('clickNode', ({ node }) => {
       onNodeClick?.(node)
@@ -339,15 +357,18 @@ export function KnowledgeGraphVisualization({ data, selectedNodeId = null, onNod
       container.style.cursor = 'grab'
       setHoveredNodeId(null)
     })
+    camera.on('updated', handleCameraUpdated)
 
     container.style.cursor = 'grab'
-    renderer.getCamera().animatedReset({ duration: 300 })
+    setZoomRatio(camera.ratio)
+    camera.animatedReset({ duration: 300 })
 
     return () => {
+      camera.removeListener('updated', handleCameraUpdated)
       renderer.kill()
       rendererRef.current = null
     }
-  }, [degreeMap, graph, onNodeClick])
+  }, [degreeMap, graph, onNodeClick, thresholds])
 
   useEffect(() => {
     const renderer = rendererRef.current
@@ -356,11 +377,11 @@ export function KnowledgeGraphVisualization({ data, selectedNodeId = null, onNod
     }
 
     renderer.setSettings({
-      nodeReducer: buildNodeReducer(graph, degreeMap, selectedNodeId, hoveredNodeId),
+      nodeReducer: buildNodeReducer(graph, degreeMap, thresholds, selectedNodeId, hoveredNodeId, zoomRatio),
       edgeReducer: buildEdgeReducer(graph, selectedNodeId, hoveredNodeId),
     })
     renderer.refresh()
-  }, [degreeMap, graph, hoveredNodeId, selectedNodeId])
+  }, [degreeMap, graph, hoveredNodeId, selectedNodeId, thresholds, zoomRatio])
 
   const handleZoomIn = () => {
     void rendererRef.current?.getCamera().animatedZoom({ duration: 180, factor: 1.5 })
