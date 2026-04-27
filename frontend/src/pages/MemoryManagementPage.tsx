@@ -9,6 +9,7 @@ import { MemoryBubbleList } from '../components/memory/MemoryBubbleList'
 import { MemoryDetailDialog } from '../components/memory/MemoryDetailDialog'
 import { MemoryEditDialog } from '../components/memory/MemoryEditDialog'
 import { MemoryFilterBar } from '../components/memory/MemoryFilterBar'
+import { createTrackMemoryHandler, useGraphRefreshCoordinator } from '../hooks/useGraphRefreshCoordinator'
 import {
   useAddMemoryToKnowledgeGraph,
   useDeleteMemory,
@@ -34,6 +35,7 @@ function resolveAddToGraphErrorMessage(error: unknown) {
 
 export function MemoryManagementPage() {
   const { showToast } = useAppToast()
+  const { trackMemory } = useGraphRefreshCoordinator()
   const [keyword, setKeyword] = useState('')
   const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null)
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null)
@@ -75,7 +77,7 @@ export function MemoryManagementPage() {
         }}
         onAddToGraph={async (memory) => {
           try {
-            await addToGraphMutation.mutateAsync(memory)
+            await createTrackMemoryHandler(trackMemory, addToGraphMutation.mutateAsync)(memory)
             setSelectedMemory(null)
             showToast({ severity: 'success', message: '已加入知识图谱处理队列，正在构建中...' })
           } catch (error) {

@@ -88,6 +88,16 @@ export async function handleTrackedMemoryUpdates({
   return result
 }
 
+export function createTrackMemoryHandler<TMemory extends { id: string }>(
+  trackMemory: (memoryId: string) => void,
+  addToGraph: (memory: TMemory) => Promise<void>,
+) {
+  return async (memory: TMemory) => {
+    await addToGraph(memory)
+    trackMemory(memory.id)
+  }
+}
+
 function consumeTrackedMemoryUpdates({
   trackedIds,
   memories,
