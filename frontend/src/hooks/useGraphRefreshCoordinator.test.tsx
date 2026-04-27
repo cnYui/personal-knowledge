@@ -16,9 +16,14 @@ describe('createGraphRefreshTracker', () => {
     const result = tracker.consume([
       { id: 'mem-1', graph_status: 'added' },
     ] satisfies MemoryGraphState[])
+    const afterResolvedResult = tracker.consume([
+      { id: 'mem-1', graph_status: 'added' },
+    ] satisfies MemoryGraphState[])
 
     expect(result.shouldRefreshGraph).toBe(true)
     expect(result.resolvedIds).toEqual(['mem-1'])
+    expect(afterResolvedResult.shouldRefreshGraph).toBe(false)
+    expect(afterResolvedResult.resolvedIds).toEqual([])
   })
 
   it('重复注册同一 memory 时 failed 不刷新 graph 且 resolvedIds 不重复', () => {
@@ -30,8 +35,13 @@ describe('createGraphRefreshTracker', () => {
     const result = tracker.consume([
       { id: 'mem-1', graph_status: 'failed' },
     ] satisfies MemoryGraphState[])
+    const afterResolvedResult = tracker.consume([
+      { id: 'mem-1', graph_status: 'failed' },
+    ] satisfies MemoryGraphState[])
 
     expect(result.shouldRefreshGraph).toBe(false)
     expect(result.resolvedIds).toEqual(['mem-1'])
+    expect(afterResolvedResult.shouldRefreshGraph).toBe(false)
+    expect(afterResolvedResult.resolvedIds).toEqual([])
   })
 })
