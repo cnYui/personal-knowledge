@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -12,6 +13,16 @@ from app.schemas.chat import ChatReference
 from app.services.chat_service import ChatService
 from app.workflow.canvas_factory import CanvasFactory
 from app.workflow.engine.citation_postprocessor import CitationResult
+
+
+@contextmanager
+def client_without_lifespan():
+    """避免启动真实后台 worker，API 契约测试只验证路由与响应。"""
+    client = TestClient(app)
+    try:
+        yield client
+    finally:
+        client.close()
 
 
 class StubCitationPostProcessor:
@@ -234,7 +245,7 @@ def test_send_chat_message_returns_answer_and_persists_messages_via_agent(monkey
 
     monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
     stub_citation_postprocessor(monkeypatch, [{'sentence_index': 0, 'citation_indexes': [1]}])
-    with TestClient(app) as client:
+    with client_without_lifespan() as client:
         client.delete("/api/chat/messages")
 
         response = client.post("/api/chat/messages", json={"message": "什么是向量空间？"})
@@ -274,7 +285,7 @@ def test_rag_query_returns_agent_answer_without_persisting_messages(monkeypatch)
 
     monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
     stub_citation_postprocessor(monkeypatch)
-    with TestClient(app) as client:
+    with client_without_lifespan() as client:
         client.delete("/api/chat/messages")
 
         response = client.post("/api/chat/rag", json={"message": "向量空间有什么用途？"})
@@ -308,7 +319,7 @@ def test_rag_query_uses_model_api_exception_handler(monkeypatch):
         )
 
     monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
-    with TestClient(app) as client:
+    with client_without_lifespan() as client:
         response = client.post("/api/chat/rag", json={"message": "解释一下 Transformer"})
 
     assert response.status_code == 400
@@ -336,7 +347,7 @@ def test_rag_stream_uses_agent_stream_path_and_returns_sse_payload(monkeypatch):
 
     monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
     stub_citation_postprocessor(monkeypatch)
-    with TestClient(app) as client:
+    with client_without_lifespan() as client:
         with client.stream("POST", "/api/chat/stream", json={"message": "向量空间有什么用途？"}) as response:
             assert response.status_code == 200
             assert response.headers['content-type'].startswith('text/event-stream')
@@ -368,7 +379,7 @@ def test_rag_stream_returns_structured_model_error_payload(monkeypatch):
         )
 
     monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
-    with TestClient(app) as client:
+    with client_without_lifespan() as client:
         with client.stream("POST", "/api/chat/stream", json={"message": "你好"}) as response:
             assert response.status_code == 200
             body = ''.join(response.iter_text())
@@ -412,7 +423,7 @@ def test_rag_query_real_canvas_probe_sufficient_skips_tool_loop(monkeypatch):
     )
     stub_citation_postprocessor(monkeypatch)
 
-    with TestClient(app) as client:
+    with client_without_lifespan() as client:
         response = client.post("/api/chat/rag", json={"message": "OpenAI 最近有什么动态？"})
 
     assert response.status_code == 200
@@ -447,7 +458,7 @@ def test_rag_query_real_canvas_probe_no_hit_retry_then_direct_general(monkeypatc
     )
     stub_citation_postprocessor(monkeypatch)
 
-    with TestClient(app) as client:
+    with client_without_lifespan() as client:
         response = client.post("/api/chat/rag", json={"message": "OpenAI 最近有什么动态？"})
 
     assert response.status_code == 200
@@ -499,7 +510,7 @@ def test_rag_query_real_canvas_probe_insufficient_enters_tool_loop(monkeypatch):
     )
     stub_citation_postprocessor(monkeypatch)
 
-    with TestClient(app) as client:
+    with client_without_lifespan() as client:
         response = client.post("/api/chat/rag", json={"message": "什么是向量空间？"})
 
     assert response.status_code == 200

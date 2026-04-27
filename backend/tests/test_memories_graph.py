@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.dependencies import get_worker
+from app.services.memory_service import MemoryService
 
 
 @pytest.fixture
@@ -19,8 +20,11 @@ def mock_worker():
 def client_with_worker(mock_worker, setup_database, override_dependencies):
     """Create test client with mocked worker."""
     app.dependency_overrides[get_worker] = lambda: mock_worker
-    with TestClient(app) as client:
+    client = TestClient(app)
+    try:
         yield client
+    finally:
+        client.close()
     app.dependency_overrides.pop(get_worker, None)
 
 
@@ -134,3 +138,28 @@ def test_get_graph_status_not_found(client_with_worker):
     response = client.get('/api/memories/nonexistent-id/graph-status')
     
     assert response.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_add_to_graph_does_not_requeue_active_pending_memory():
+    repository = MagicMock()
+    memory = MagicMock()
+    memory.id = 'memory-active'
+    memory.graph_status = 'pending'
+    memory.graph_error = None
+    repository.get.return_value = memory
+    service = MemoryService(repository=repository)
+    db = MagicMock()
+
+    class WorkerStub:
+        def is_memory_active(self, memory_id: str) -> bool:
+            return memory_id == 'memory-active'
+
+    worker = WorkerStub()
+    worker.enqueue = AsyncMock()
+
+    result = await service.add_to_graph(db, memory.id, worker)
+
+    assert result is memory
+    worker.enqueue.assert_not_awaited()
+    db.commit.assert_not_called()

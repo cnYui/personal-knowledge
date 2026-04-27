@@ -23,11 +23,26 @@ async def test_enqueue(mock_graphiti_client):
     worker = GraphitiIngestWorker()
 
     memory_id = 'test-memory-123'
-    await worker.enqueue(memory_id)
+    queued = await worker.enqueue(memory_id)
 
+    assert queued is True
     assert worker.queue.qsize() == 1
     queued_id = await worker.queue.get()
     assert queued_id == memory_id
+
+
+@pytest.mark.anyio
+@patch('app.workers.graphiti_ingest_worker.GraphitiClient')
+async def test_enqueue_skips_duplicate_memory_already_queued(mock_graphiti_client):
+    worker = GraphitiIngestWorker()
+
+    first_queued = await worker.enqueue('memory-1')
+    second_queued = await worker.enqueue('memory-1')
+
+    assert first_queued is True
+    assert second_queued is False
+    assert worker.queue.qsize() == 1
+    assert worker.is_memory_active('memory-1') is True
 
 
 @pytest.mark.anyio
@@ -43,6 +58,7 @@ async def test_process_memory_success(mock_session_local, mock_graphiti_client):
     mock_memory.content = 'Test content'
     mock_memory.group_id = 'default'
     mock_memory.created_at = Mock()
+    mock_memory.graph_status = 'pending'
 
     mock_repository = Mock()
     mock_repository.get.return_value = mock_memory
@@ -81,6 +97,7 @@ async def test_process_memory_failure(mock_session_local, mock_graphiti_client):
     mock_memory.content = 'Test content'
     mock_memory.group_id = 'default'
     mock_memory.created_at = Mock()
+    mock_memory.graph_status = 'pending'
 
     mock_repository = Mock()
     mock_repository.get.return_value = mock_memory
@@ -114,6 +131,7 @@ async def test_process_memory_failure_preserves_graph_dimension_mismatch_message
     mock_memory.content = 'Test content'
     mock_memory.group_id = 'default'
     mock_memory.created_at = Mock()
+    mock_memory.graph_status = 'pending'
 
     mock_repository = Mock()
     mock_repository.get.return_value = mock_memory
@@ -162,6 +180,34 @@ async def test_process_memory_not_found(mock_session_local, mock_graphiti_client
     await worker._process_memory('nonexistent-memory')
 
     mock_client_instance.add_memory_in_chunks.assert_not_called()
+    mock_db.close.assert_called_once()
+
+
+@pytest.mark.anyio
+@patch('app.workers.graphiti_ingest_worker.GraphitiClient')
+@patch('app.workers.graphiti_ingest_worker.SessionLocal')
+async def test_process_memory_skips_stale_non_pending_queue_item(mock_session_local, mock_graphiti_client):
+    mock_db = Mock()
+    mock_session_local.return_value = mock_db
+
+    mock_memory = Mock()
+    mock_memory.id = 'test-memory-123'
+    mock_memory.graph_status = 'failed'
+
+    mock_repository = Mock()
+    mock_repository.get.return_value = mock_memory
+
+    mock_client_instance = Mock()
+    mock_client_instance.add_memory_in_chunks = AsyncMock()
+    mock_graphiti_client.return_value = mock_client_instance
+
+    worker = GraphitiIngestWorker()
+    worker.repository = mock_repository
+
+    await worker._process_memory('test-memory-123')
+
+    mock_client_instance.add_memory_in_chunks.assert_not_called()
+    mock_db.commit.assert_not_called()
     mock_db.close.assert_called_once()
 
 

@@ -47,6 +47,11 @@ class ModelConfigService:
         settings.dialog_api_key = self._read_value(env_values, 'DIALOG_API_KEY', settings.dialog_api_key)
         settings.dialog_base_url = self._read_value(env_values, 'DIALOG_BASE_URL', settings.dialog_base_url)
         settings.dialog_model = self._read_value(env_values, 'DIALOG_MODEL', settings.dialog_model)
+        settings.dialog_reasoning_effort = self._read_value(
+            env_values,
+            'DIALOG_REASONING_EFFORT',
+            settings.dialog_reasoning_effort,
+        )
         settings.knowledge_build_provider = self._read_value(
             env_values,
             'KNOWLEDGE_BUILD_PROVIDER',
@@ -67,6 +72,11 @@ class ModelConfigService:
             'KNOWLEDGE_BUILD_MODEL',
             settings.knowledge_build_model,
         )
+        settings.knowledge_build_reasoning_effort = self._read_value(
+            env_values,
+            'KNOWLEDGE_BUILD_REASONING_EFFORT',
+            settings.knowledge_build_reasoning_effort,
+        )
 
     def _dialog_defaults(self) -> RuntimeModelConfig:
         provider = (settings.dialog_provider or 'deepseek').strip() or 'deepseek'
@@ -75,6 +85,7 @@ class ModelConfigService:
             api_key=settings.dialog_api_key,
             base_url=settings.dialog_base_url,
             model=settings.dialog_model,
+            reasoning_effort=settings.dialog_reasoning_effort,
         )
 
     def _knowledge_build_defaults(self) -> RuntimeModelConfig:
@@ -84,6 +95,7 @@ class ModelConfigService:
             api_key=settings.knowledge_build_api_key,
             base_url=settings.knowledge_build_base_url,
             model=settings.knowledge_build_model,
+            reasoning_effort=settings.knowledge_build_reasoning_effort,
         )
 
     def reload(self) -> None:
@@ -109,6 +121,7 @@ class ModelConfigService:
                     provider=self._dialog_config.provider,
                     base_url=self._dialog_config.base_url,
                     model=self._dialog_config.model,
+                    reasoning_effort=self._dialog_config.reasoning_effort,
                     api_key=ApiKeyFieldStatus(
                         configured=bool(self._dialog_config.api_key),
                         masked_value=_mask_api_key(self._dialog_config.api_key),
@@ -118,6 +131,7 @@ class ModelConfigService:
                     provider=self._knowledge_build_config.provider,
                     base_url=self._knowledge_build_config.base_url,
                     model=self._knowledge_build_config.model,
+                    reasoning_effort=self._knowledge_build_config.reasoning_effort,
                     api_key=ApiKeyFieldStatus(
                         configured=bool(self._knowledge_build_config.api_key),
                         masked_value=_mask_api_key(self._knowledge_build_config.api_key),
@@ -137,11 +151,23 @@ class ModelConfigService:
             )
 
     def update_config(self, payload: ModelConfigUpdate) -> ModelConfigRead:
-        updates: dict[str, str] = {}
-        if payload.dialog_api_key is not None:
-            updates['DIALOG_API_KEY'] = payload.dialog_api_key.strip()
-        if payload.knowledge_build_api_key is not None:
-            updates['KNOWLEDGE_BUILD_API_KEY'] = payload.knowledge_build_api_key.strip()
+        field_mapping = {
+            'dialog_provider': 'DIALOG_PROVIDER',
+            'dialog_base_url': 'DIALOG_BASE_URL',
+            'dialog_model': 'DIALOG_MODEL',
+            'dialog_reasoning_effort': 'DIALOG_REASONING_EFFORT',
+            'dialog_api_key': 'DIALOG_API_KEY',
+            'knowledge_build_provider': 'KNOWLEDGE_BUILD_PROVIDER',
+            'knowledge_build_base_url': 'KNOWLEDGE_BUILD_BASE_URL',
+            'knowledge_build_model': 'KNOWLEDGE_BUILD_MODEL',
+            'knowledge_build_reasoning_effort': 'KNOWLEDGE_BUILD_REASONING_EFFORT',
+            'knowledge_build_api_key': 'KNOWLEDGE_BUILD_API_KEY',
+        }
+        updates = {
+            env_key: str(value).strip()
+            for field_name, env_key in field_mapping.items()
+            if (value := getattr(payload, field_name)) is not None
+        }
         if not updates:
             return self.get_masked_config()
         self.env_store.update(updates)

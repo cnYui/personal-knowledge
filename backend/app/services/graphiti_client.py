@@ -6,12 +6,11 @@ from typing import Awaitable, Callable
 
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodeType
-from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.cross_encoder import OpenAIRerankerClient
 
 from app.core.config import settings
-from app.core.model_errors import map_model_api_error, missing_api_key_error
 from app.services.model_config_service import ModelConfigService, model_config_service
+from app.services.model_client_runtime import ModelRuntimeGateway, model_runtime_gateway
 from app.services.local_embedder import LocalEmbedder, LocalEmbedderConfig
 from app.services.stepfun_llm_client import StepFunLLMClient
 
@@ -35,15 +34,21 @@ class GraphitiClient:
         self,
         *,
         model_config_service_instance: ModelConfigService | None = None,
+        model_runtime_gateway_instance: ModelRuntimeGateway | None = None,
     ):
         self.model_config_service = model_config_service_instance or model_config_service
+        self.model_runtime_gateway = model_runtime_gateway_instance or (
+            ModelRuntimeGateway(model_config_service_instance=self.model_config_service)
+            if model_config_service_instance is not None
+            else model_runtime_gateway
+        )
         embedder_config = LocalEmbedderConfig(
             model_name='paraphrase-multilingual-MiniLM-L12-v2',  # Supports Chinese and English
         )
         embedder = LocalEmbedder(config=embedder_config)
         self.embedder = embedder
         self.client: Graphiti | None = None
-        self._runtime_signature: tuple[str, str, str, int] | None = None
+        self._runtime_signature: tuple[str, str, str, str, str, str, int] | None = None
         self.relation_dedup_threshold = min(max(settings.graph_relation_dedup_threshold, 0.0), 1.0)
         self.long_memory_threshold = DEFAULT_LONG_MEMORY_THRESHOLD
         self.target_chunk_length = DEFAULT_TARGET_CHUNK_LENGTH
@@ -52,48 +57,31 @@ class GraphitiClient:
         logger.info('GraphitiClient initialized')
 
     async def _ensure_runtime_client(self) -> None:
-        runtime_config = self.model_config_service.get_knowledge_build_config()
-        signature = (
-            runtime_config.provider,
-            runtime_config.api_key,
-            runtime_config.base_url,
-            self.model_config_service.version,
-        )
-        if self.client is not None and signature == self._runtime_signature:
+        runtime = self.model_runtime_gateway.get_runtime('knowledge_build')
+        if self.client is not None and runtime.signature == self._runtime_signature:
             return
 
         if self.client is not None:
             await self.client.close()
 
-        if not runtime_config.api_key:
-            logger.error(
-                'GraphitiClient runtime initialization failed: missing knowledge-build API key for provider=%s',
-                runtime_config.provider,
-            )
-            raise missing_api_key_error(provider=runtime_config.provider, purpose='知识库构建模型')
-
         logger.info(
             'Refreshing GraphitiClient runtime: provider=%s, model=%s, base_url=%s, neo4j_uri=%s, neo4j_user=%s',
-            runtime_config.provider,
-            runtime_config.model,
-            runtime_config.base_url,
+            runtime.provider,
+            runtime.model,
+            runtime.base_url,
             settings.neo4j_uri,
             settings.neo4j_user,
         )
         try:
-            llm_config = LLMConfig(
-                api_key=runtime_config.api_key,
-                base_url=runtime_config.base_url,
-                model=runtime_config.model,
-                small_model=runtime_config.model,
+            llm_config = self.model_runtime_gateway.build_graphiti_llm_config(
+                'knowledge_build',
                 max_tokens=2048,
             )
-            llm_client = StepFunLLMClient(config=llm_config)
-            reranker_config = LLMConfig(
-                api_key=runtime_config.api_key,
-                base_url=runtime_config.base_url,
-                model=runtime_config.model,
+            llm_client = StepFunLLMClient(
+                config=llm_config,
+                reasoning=runtime.reasoning_effort or None,
             )
+            reranker_config = self.model_runtime_gateway.build_graphiti_llm_config('knowledge_build')
             cross_encoder = OpenAIRerankerClient(config=reranker_config)
 
             self.client = Graphiti(
@@ -104,12 +92,12 @@ class GraphitiClient:
                 embedder=self.embedder,
                 cross_encoder=cross_encoder,
             )
-            self._runtime_signature = signature
+            self._runtime_signature = runtime.signature
             logger.info(
                 'GraphitiClient runtime refreshed with provider=%s, model=%s, base_url=%s',
-                runtime_config.provider,
-                runtime_config.model,
-                runtime_config.base_url,
+                runtime.provider,
+                runtime.model,
+                runtime.base_url,
             )
         except Exception as error:
             logger.error('GraphitiClient runtime initialization failed: %s', error, exc_info=True)
@@ -152,10 +140,7 @@ class GraphitiClient:
                 group_id=group_id,
             )
         except Exception as error:
-            raise map_model_api_error(
-                error,
-                provider=self.model_config_service.get_knowledge_build_config().provider,
-            ) from error
+            raise self.model_runtime_gateway.get_runtime('knowledge_build').map_error(error) from error
 
         episode_uuid = result.episode.uuid
         logger.info(f'Memory {memory_id} added to graph as episode {episode_uuid}')
@@ -259,10 +244,7 @@ class GraphitiClient:
 
         except Exception as e:
             logger.error(f'GraphitiClient.search() failed: {e}', exc_info=True)
-            raise map_model_api_error(
-                e,
-                provider=self.model_config_service.get_knowledge_build_config().provider,
-            ) from e
+            raise self.model_runtime_gateway.get_runtime('knowledge_build').map_error(e) from e
 
     def _normalize_relation_fact(self, fact: str) -> str:
         normalized = fact.lower().strip()

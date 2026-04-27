@@ -24,7 +24,7 @@ const PAGE_META: Record<string, { title: string; description: string }> = {
   },
   '/settings': {
     title: '设置',
-    description: '统一管理对话模型与知识库构建模型的 API Key。保存后会写回 .env，并立即热更新当前后端服务。',
+    description: '统一管理对话模型与知识库构建模型的厂商、地址、模型和密钥。保存后会写回 .env，并立即热更新当前后端服务。',
   },
 }
 

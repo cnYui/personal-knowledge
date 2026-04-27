@@ -1,8 +1,11 @@
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ENV_FILE_PATH = Path(__file__).resolve().parents[2] / '.env'
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = BACKEND_DIR.parent
+ENV_FILE_PATH = Path(os.environ.get('PKB_ENV_FILE', PROJECT_ROOT / '.env')).expanduser().resolve()
 
 
 class Settings(BaseSettings):
@@ -23,10 +26,12 @@ class Settings(BaseSettings):
     dialog_api_key: str = ""
     dialog_base_url: str = "https://api.deepseek.com/v1"
     dialog_model: str = "deepseek-chat"
+    dialog_reasoning_effort: str = ""
     knowledge_build_provider: str = "deepseek"
     knowledge_build_api_key: str = ""
     knowledge_build_base_url: str = "https://api.deepseek.com/v1"
     knowledge_build_model: str = "deepseek-chat"
+    knowledge_build_reasoning_effort: str = ""
 
     # Relationship text deduplication (semantic near-duplicate filtering)
     graph_relation_dedup_threshold: float = 0.93

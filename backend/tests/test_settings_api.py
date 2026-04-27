@@ -17,12 +17,14 @@ def _build_response(dialog_mask: str, build_mask: str) -> ModelConfigRead:
             provider='deepseek',
             base_url='https://api.deepseek.com/v1',
             model='deepseek-chat',
+            reasoning_effort='',
             api_key=ApiKeyFieldStatus(configured=bool(dialog_mask), masked_value=dialog_mask),
         ),
         knowledge_build=RuntimeModelConfigStatus(
             provider='deepseek',
             base_url='https://api.deepseek.com/v1',
             model='deepseek-chat',
+            reasoning_effort='',
             api_key=ApiKeyFieldStatus(configured=bool(build_mask), masked_value=build_mask),
         ),
         knowledge_profile=AgentKnowledgeProfileRead(
@@ -54,12 +56,14 @@ def test_get_model_config_returns_masked_runtime_config(monkeypatch):
             'provider': 'deepseek',
             'base_url': 'https://api.deepseek.com/v1',
             'model': 'deepseek-chat',
+            'reasoning_effort': '',
             'api_key': {'configured': True, 'masked_value': 'dial****1234'},
         },
         'knowledge_build': {
             'provider': 'deepseek',
             'base_url': 'https://api.deepseek.com/v1',
             'model': 'deepseek-chat',
+            'reasoning_effort': '',
             'api_key': {'configured': True, 'masked_value': 'buil****5678'},
         },
         'knowledge_profile': {
