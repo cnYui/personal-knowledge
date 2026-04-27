@@ -10,13 +10,14 @@ import json
 import logging
 from typing import Any
 
-from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
 
 from graphiti_core.llm_client.config import LLMConfig, ModelSize
 from graphiti_core.llm_client.openai_base_client import BaseOpenAIClient
 from graphiti_core.prompts.models import Message
+
+from app.services.model_client_runtime import create_openai_compatible_client
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class StepFunLLMClient(BaseOpenAIClient):
         self,
         config: LLMConfig | None = None,
         cache: bool = False,
+        reasoning: str | None = None,
     ):
         """Initialize StepFun LLM client."""
         if config is None:
@@ -41,9 +43,9 @@ class StepFunLLMClient(BaseOpenAIClient):
         # Use max_tokens from config, or default to a safe value for step-1-8k
         max_tokens = config.max_tokens if config.max_tokens else 2048
 
-        super().__init__(config, cache, max_tokens, reasoning=None, verbosity=None)
+        super().__init__(config, cache, max_tokens, reasoning=reasoning, verbosity=None)
 
-        self.client = AsyncOpenAI(api_key=config.api_key, base_url=config.base_url)
+        self.client = create_openai_compatible_client(api_key=config.api_key, base_url=config.base_url)
         logger.info(
             f'StepFunLLMClient initialized with base_url={config.base_url}, '
             f'max_tokens={max_tokens}'
@@ -105,6 +107,7 @@ class StepFunLLMClient(BaseOpenAIClient):
             temperature=temperature if temperature is not None else 0.7,
             max_tokens=max_tokens,
             response_format={'type': 'json_object'},
+            **({'reasoning_effort': reasoning} if reasoning else {}),
         )
 
         # Parse the JSON response into the response model
@@ -149,4 +152,5 @@ class StepFunLLMClient(BaseOpenAIClient):
             temperature=temperature if temperature is not None else 0.7,
             max_tokens=max_tokens,
             response_format={'type': 'json_object'},
+            **({'reasoning_effort': reasoning} if reasoning else {}),
         )

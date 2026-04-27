@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getJson, putJson, postJson } = vi.hoisted(() => ({
+const { deleteVoid, getJson, putJson, postJson } = vi.hoisted(() => ({
+  deleteVoid: vi.fn(),
   getJson: vi.fn(),
   putJson: vi.fn(),
   postJson: vi.fn(),
 }))
 
 vi.mock('./http', () => ({
+  deleteVoid,
   getJson,
   putJson,
   postJson,
@@ -14,6 +16,7 @@ vi.mock('./http', () => ({
 
 import { fetchDailyReview } from './dailyReviewApi'
 import { fetchGraphData } from './graphApi'
+import { temporalGraphGateway } from './memoryGateway'
 import {
   fetchAllPrompts,
   fetchComposedPrompt,
@@ -56,6 +59,14 @@ describe('domain api modules', () => {
     expect(getJson).toHaveBeenCalledWith('/api/graph/data', {
       params: { group_id: 'focus', limit: 20 },
     })
+  })
+
+  it('memoryGateway 入图操作调用 memories add-to-graph endpoint', async () => {
+    postJson.mockResolvedValue({})
+
+    await temporalGraphGateway.addToKnowledgeGraph({ id: 'mem-1' } as never)
+
+    expect(postJson).toHaveBeenCalledWith('/api/memories/mem-1/add-to-graph')
   })
 
   it('prompt 相关接口都通过统一 helper 调用对应 endpoint', async () => {

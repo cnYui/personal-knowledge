@@ -9,7 +9,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from app.core.model_errors import map_model_api_error, missing_api_key_error
+from app.services.model_client_runtime import ModelRuntimeGateway, model_runtime_gateway
 from app.services.model_config_service import ModelConfigService, model_config_service
 from app.workflow.reference_store import ReferenceStore
 
@@ -33,13 +33,21 @@ class CitationPostProcessor:
         fallback_prefix: str = FALLBACK_PREFIX,
         llm_client: AsyncOpenAI | None = None,
         model_config_service_instance: ModelConfigService | None = None,
+        model_runtime_gateway_instance: ModelRuntimeGateway | None = None,
     ) -> None:
         self.fallback_prefix = fallback_prefix
         self.model_config_service = model_config_service_instance or model_config_service
+        self.model_runtime_gateway = model_runtime_gateway_instance or (
+            ModelRuntimeGateway(model_config_service_instance=self.model_config_service)
+            if model_config_service_instance is not None
+            else model_runtime_gateway
+        )
         self.llm_client = llm_client
         self._managed_llm_client = llm_client is None
-        self._dialog_signature: tuple[str, str, str, int] | None = None
+        self._dialog_signature: tuple[str, str, str, str, str, str, int] | None = None
         self._dialog_model = 'deepseek-chat'
+        self._dialog_reasoning_effort = ''
+        self._dialog_completion_extra: dict[str, str] = {}
 
     def _normalize_snapshot(
         self,
@@ -100,25 +108,15 @@ class CitationPostProcessor:
         if not self._managed_llm_client:
             return
 
-        config = self.model_config_service.get_dialog_config()
-        signature = (
-            config.provider,
-            config.api_key,
-            config.base_url,
-            self.model_config_service.version,
-        )
-        if self.llm_client is not None and signature == self._dialog_signature:
+        runtime = self.model_runtime_gateway.get_runtime('dialog')
+        if self.llm_client is not None and runtime.signature == self._dialog_signature:
             return
 
-        if not config.api_key:
-            raise missing_api_key_error(provider=config.provider, purpose='对话模型')
-
-        self.llm_client = AsyncOpenAI(
-            api_key=config.api_key,
-            base_url=config.base_url,
-        )
-        self._dialog_model = config.model
-        self._dialog_signature = signature
+        self.llm_client = runtime.client
+        self._dialog_model = runtime.model
+        self._dialog_reasoning_effort = runtime.reasoning_effort
+        self._dialog_completion_extra = runtime.completion_extra()
+        self._dialog_signature = runtime.signature
 
     def _split_sentences(self, answer: str) -> list[str]:
         parts = re.split(r'(?<=[。！？!?；;])\s*|\n+', str(answer or '').strip())
@@ -169,6 +167,7 @@ class CitationPostProcessor:
                 temperature=0.0,
                 max_tokens=800,
                 response_format={'type': 'json_object'},
+                **self._dialog_completion_extra,
             )
             if isawaitable(response):
                 response = await response
@@ -178,8 +177,7 @@ class CitationPostProcessor:
             if not isinstance(items, list):
                 return []
         except Exception as error:
-            provider = self.model_config_service.get_dialog_config().provider
-            logger.warning('Sentence citation alignment skipped: %s', map_model_api_error(error, provider=provider))
+            logger.warning('Sentence citation alignment skipped: %s', self.model_runtime_gateway.get_runtime('dialog').map_error(error))
             return []
 
         sentence_count = len(sentences)

@@ -7,6 +7,7 @@ export interface RuntimeModelConfigStatus {
   provider: string
   base_url: string
   model: string
+  reasoning_effort: string
   api_key: ApiKeyFieldStatus
 }
 
@@ -29,6 +30,14 @@ export interface ModelConfigRead {
 }
 
 export interface ModelConfigUpdate {
+  dialog_provider?: string
+  dialog_base_url?: string
+  dialog_model?: string
+  dialog_reasoning_effort?: string
   dialog_api_key?: string
+  knowledge_build_provider?: string
+  knowledge_build_base_url?: string
+  knowledge_build_model?: string
+  knowledge_build_reasoning_effort?: string
   knowledge_build_api_key?: string
 }

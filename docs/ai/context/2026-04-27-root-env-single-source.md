@@ -41,6 +41,17 @@
 
 数据库和 Neo4j 地址存在宿主机与容器网络差异，因此 Docker Compose 可以对容器进程注入运行地址，但这不改变用户可编辑配置的唯一来源。
 
+## 验证记录
+
+2026-04-27 已重建后端容器验证新规则。
+
+- `pkb-backend` 挂载根目录 `.env` 到 `/workspace/.env`
+- 容器环境只保留 `PKB_ENV_FILE`、`DATABASE_URL`、`NEO4J_URI` 等容器运行必需项，不再注入 `DIALOG_*` 或 `KNOWLEDGE_BUILD_*`
+- `GET /api/settings/model-config` 返回 `knowledge_build.reasoning_effort=medium`
+- `PUT /api/settings/model-config` 后没有重新生成 `backend/.env`，写回目标仍是根目录 `.env`
+
+注意：修改 Compose 文件后，旧容器不会自动获得新挂载和新环境变量。若设置页显示值与根目录 `.env` 不一致，先重建后端容器。
+
 ## 后续约束
 
 新增环境变量时只更新根目录 `.env.example`。

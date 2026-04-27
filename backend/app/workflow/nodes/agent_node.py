@@ -188,6 +188,22 @@ class AgentNode(WorkflowNode):
         self.model = 'deepseek-chat'
         return self.model
 
+    def _get_reasoning_effort(self) -> str:
+        knowledge_graph_service = self._get_knowledge_graph_service()
+        if hasattr(knowledge_graph_service, '_ensure_dialog_client'):
+            knowledge_graph_service._ensure_dialog_client()
+        return str(getattr(knowledge_graph_service, '_dialog_reasoning_effort', '') or '')
+
+    def _get_completion_extra(self) -> dict[str, Any]:
+        knowledge_graph_service = self._get_knowledge_graph_service()
+        if hasattr(knowledge_graph_service, '_ensure_dialog_client'):
+            knowledge_graph_service._ensure_dialog_client()
+        completion_extra = getattr(knowledge_graph_service, '_dialog_completion_extra', None)
+        if isinstance(completion_extra, dict):
+            return dict(completion_extra)
+        reasoning_effort = self._get_reasoning_effort()
+        return {'reasoning_effort': reasoning_effort} if reasoning_effort else {}
+
     def _new_trace(self, mode: str) -> AgentTrace:
         return AgentTrace(mode=mode, final_action='')
 
@@ -288,13 +304,17 @@ class AgentNode(WorkflowNode):
         return history
 
     async def _complete_text(self, *, system_prompt: str, user_prompt: str) -> str:
-        response = self._get_llm_client().chat.completions.create(
-            model=self._get_model_name(),
-            messages=[
+        completion_kwargs = {
+            'model': self._get_model_name(),
+            'messages': [
                 {'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': user_prompt},
             ],
-            temperature=0.3,
+            'temperature': 0.3,
+        }
+        completion_kwargs.update(self._get_completion_extra())
+        response = self._get_llm_client().chat.completions.create(
+            **completion_kwargs,
         )
         if isawaitable(response):
             response = await response
@@ -606,6 +626,11 @@ class AgentNode(WorkflowNode):
             context.set_global(output_key, result)
             return result
 
+        completion_kwargs = {
+            'temperature': float(self.config.get('temperature', 0.2)),
+            **self._get_completion_extra(),
+        }
+
         tool_loop_result = await self._get_tool_loop_engine().run(
             messages=self._build_messages(context, query),
             tool_schemas=self._tool_schemas(),
@@ -614,7 +639,7 @@ class AgentNode(WorkflowNode):
                 history_tool.name: history_tool,
             },
             system_prompt=system_prompt,
-            completion_kwargs={'temperature': float(self.config.get('temperature', 0.2))},
+            completion_kwargs=completion_kwargs,
             event_callback=emit_timeline,
         )
 
