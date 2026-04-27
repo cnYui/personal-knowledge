@@ -19,8 +19,11 @@ def mock_worker():
 def client_with_worker(mock_worker, setup_database, override_dependencies):
     """Create test client with mocked worker."""
     app.dependency_overrides[get_worker] = lambda: mock_worker
-    with TestClient(app) as client:
+    client = TestClient(app)
+    try:
         yield client
+    finally:
+        client.close()
     app.dependency_overrides.pop(get_worker, None)
 
 

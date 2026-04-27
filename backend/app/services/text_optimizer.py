@@ -9,7 +9,7 @@ from typing import Optional
 
 from openai import AsyncOpenAI
 
-from app.core.model_errors import map_model_api_error, missing_api_key_error
+from app.services.model_client_runtime import ModelRuntimeGateway, model_runtime_gateway
 from app.services.model_config_service import ModelConfigService, model_config_service
 from app.services.prompt_config_service import prompt_config_service
 
@@ -23,32 +23,30 @@ class TextOptimizer:
         self,
         *,
         model_config_service_instance: ModelConfigService | None = None,
+        model_runtime_gateway_instance: ModelRuntimeGateway | None = None,
     ):
         self.model_config_service = model_config_service_instance or model_config_service
+        self.model_runtime_gateway = model_runtime_gateway_instance or (
+            ModelRuntimeGateway(model_config_service_instance=self.model_config_service)
+            if model_config_service_instance is not None
+            else model_runtime_gateway
+        )
         self.client: AsyncOpenAI | None = None
         self.model = 'deepseek-chat'
-        self._runtime_signature: tuple[str, str, str, int] | None = None
+        self.reasoning_effort = ''
+        self.completion_extra: dict[str, str] = {}
+        self._runtime_signature: tuple[str, str, str, str, str, str, int] | None = None
 
     def _ensure_client(self) -> None:
-        config = self.model_config_service.get_dialog_config()
-        signature = (
-            config.provider,
-            config.api_key,
-            config.base_url,
-            self.model_config_service.version,
-        )
-        if self.client is not None and signature == self._runtime_signature:
+        runtime = self.model_runtime_gateway.get_runtime('dialog')
+        if self.client is not None and runtime.signature == self._runtime_signature:
             return
 
-        if not config.api_key:
-            raise missing_api_key_error(provider=config.provider, purpose='对话模型')
-
-        self.client = AsyncOpenAI(
-            api_key=config.api_key,
-            base_url=config.base_url,
-        )
-        self.model = config.model
-        self._runtime_signature = signature
+        self.client = runtime.client
+        self.model = runtime.model
+        self.reasoning_effort = runtime.reasoning_effort
+        self.completion_extra = runtime.completion_extra()
+        self._runtime_signature = runtime.signature
 
     async def optimize_text(self, text: str, custom_prompt: str | None = None) -> Optional[str]:
         """
@@ -89,10 +87,10 @@ class TextOptimizer:
                     ],
                     temperature=0.3,  # Lower temperature for more consistent output
                     max_tokens=2048,
+                    **self.completion_extra,
                 )
             except Exception as error:
-                provider = self.model_config_service.get_dialog_config().provider
-                raise map_model_api_error(error, provider=provider) from error
+                raise self.model_runtime_gateway.get_runtime('dialog').map_error(error) from error
 
             optimized_text = response.choices[0].message.content
             if optimized_text:

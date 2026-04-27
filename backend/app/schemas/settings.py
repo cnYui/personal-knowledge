@@ -15,12 +15,14 @@ class RuntimeModelConfig(BaseModel):
     api_key: str
     base_url: str
     model: str
+    reasoning_effort: str = ''
 
 
 class RuntimeModelConfigStatus(BaseModel):
     provider: str
     base_url: str
     model: str
+    reasoning_effort: str = ''
     api_key: ApiKeyFieldStatus
 
 
@@ -43,5 +45,13 @@ class ModelConfigRead(BaseModel):
 
 
 class ModelConfigUpdate(BaseModel):
+    dialog_provider: str | None = Field(default=None)
+    dialog_base_url: str | None = Field(default=None)
+    dialog_model: str | None = Field(default=None)
+    dialog_reasoning_effort: str | None = Field(default=None)
     dialog_api_key: str | None = Field(default=None)
+    knowledge_build_provider: str | None = Field(default=None)
+    knowledge_build_base_url: str | None = Field(default=None)
+    knowledge_build_model: str | None = Field(default=None)
+    knowledge_build_reasoning_effort: str | None = Field(default=None)
     knowledge_build_api_key: str | None = Field(default=None)
