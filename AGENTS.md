@@ -60,6 +60,8 @@
 - 2026-04-27：Graph 页面已移除 `reactflow` 依赖与残留组件，知识图谱展示统一收敛到 `sigma + graphology` 一条渲染链路
 - 2026-04-27：Graph 页面布局不再使用固定环形坐标，当前采用 `ForceAtlas2` 力导布局；环形坐标仅作为初始种子位置
 - 2026-04-27：Graph 节点视觉权重默认按 `degree` 做 `log2(degree + 1)` 尺寸映射，标签显示按相机缩放分三档控制 `top 10% / 25% / 50%` 分位数，`degree <= 1` 节点默认不常显标签
+- 2026-04-27：Graph 自动刷新联动优先采用“memories 轮询状态 + 前端协调层触发 `invalidateQueries(['graph-data'])`”方案，覆盖“graph 页已打开自动刷新”和“之后进入 graph 页直接看到最新图谱”，当前不引入 SSE / WebSocket
+- 2026-04-27：Graph 自动刷新协调层最终拆为 `useGraphRefreshCoordinator + graphRefreshTracker`；其中 memories 轮询只能在存在 tracked memory 时启用，禁止因全局 provider 挂载而产生常驻轮询
 - 2026-04-27：已修正 `docker-compose.dev.yml` 的前端端口覆盖方式，开发叠加模式下宿主机 `5173` 直接映射到 Vite `5173`，不再保留 `5174` 作为默认开发入口
 - 2026-04-27：环境变量收敛到根目录 `.env` 作为唯一运行时配置源；已移除 `backend/.env.example`，后端设置页和 Docker 后端都读写同一份根目录 `.env`
 - 2026-04-27：Graphiti 入图 worker 必须维护 memory 级别的排队/执行去重，禁止同一 memory 在 `pending` 期间重复入队；本地 sentence-transformers embedding 必须放到线程池执行，不能直接阻塞 FastAPI 事件循环
