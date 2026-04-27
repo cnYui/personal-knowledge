@@ -1,4 +1,4 @@
-import { QueryClient, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   createContext,
   createElement,
@@ -12,18 +12,8 @@ import {
   useState,
 } from 'react'
 
+import { createGraphRefreshTracker } from './graphRefreshTracker'
 import { useMemories } from './useMemories'
-
-type MemoryGraphState = {
-  id: string
-  graph_status?: string | null
-}
-
-type GraphRefreshConsumeResult = {
-  shouldRefreshGraph: boolean
-  resolvedIds: string[]
-  remainingTrackedCount: number
-}
 
 type GraphRefreshCoordinatorContextValue = {
   trackMemory: (memoryId: string) => void
@@ -31,69 +21,12 @@ type GraphRefreshCoordinatorContextValue = {
 
 const GraphRefreshCoordinatorContext = createContext<GraphRefreshCoordinatorContextValue | null>(null)
 
-export function createGraphRefreshTracker(pendingIds: Set<string> = new Set<string>()) {
-  const trackedPendingIds = pendingIds
-
-  return {
-    track(memoryId: string) {
-      trackedPendingIds.add(memoryId)
-    },
-    consume(memories: MemoryGraphState[]): GraphRefreshConsumeResult {
-      const resolvedIds: string[] = []
-      let shouldRefreshGraph = false
-
-      for (const memory of memories) {
-        if (!trackedPendingIds.has(memory.id)) {
-          continue
-        }
-
-        if (memory.graph_status === 'added') {
-          shouldRefreshGraph = true
-          trackedPendingIds.delete(memory.id)
-          resolvedIds.push(memory.id)
-          continue
-        }
-
-        if (memory.graph_status === 'failed') {
-          trackedPendingIds.delete(memory.id)
-          resolvedIds.push(memory.id)
-        }
-      }
-
-      return {
-        shouldRefreshGraph,
-        resolvedIds,
-        remainingTrackedCount: trackedPendingIds.size,
-      }
-    },
-  }
-}
-
-export async function handleTrackedMemoryUpdates({
-  queryClient,
-  trackedIds,
-  memories,
-}: {
-  queryClient: QueryClient
-  trackedIds: Set<string>
-  memories: MemoryGraphState[]
-}) {
-  const tracker = createGraphRefreshTracker(trackedIds)
-  const result = tracker.consume(memories)
-
-  if (result.shouldRefreshGraph) {
-    await queryClient.invalidateQueries({ queryKey: ['graph-data'] })
-  }
-
-  return result
-}
-
 function consumeTrackedMemoryUpdates({
   trackedIds,
   memories,
 }: {
   trackedIds: Set<string>
-  memories: MemoryGraphState[]
+  memories: Array<{ id: string; graph_status?: string | null }>
 }) {
   const tracker = createGraphRefreshTracker(trackedIds)
 
@@ -105,6 +38,10 @@ export function GraphRefreshCoordinatorProvider({ children }: PropsWithChildren)
   const [trackedCount, setTrackedCount] = useState(0)
 
   const trackMemory = useCallback((memoryId: string) => {
+    if (!memoryId.trim()) {
+      return
+    }
+
     if (trackedIdsRef.current.has(memoryId)) {
       return
     }
