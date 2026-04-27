@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from graphiti_core.edges import EntityEdge
-from graphiti_core.nodes import EntityNode
+from graphiti_core.nodes import EntityNode, EpisodicNode
 from neo4j import AsyncGraphDatabase
 
 from app.core.config import settings
@@ -12,6 +12,10 @@ from app.schemas.graph import GraphData, GraphEdge, GraphNode
 from app.services.graphiti_client import GraphitiClient
 
 logger = logging.getLogger(__name__)
+
+
+def _node_type_from_labels(labels: list[str] | None) -> str:
+    return 'episode' if labels and 'Episodic' in labels else 'entity'
 
 
 class GraphVisualizationService:
@@ -23,29 +27,8 @@ class GraphVisualizationService:
         logger.info('GraphVisualizationService initialized')
 
     async def _fetch_with_graphiti_driver(self, driver: Any, *, group_id: str, limit: int) -> GraphData:
-        # Fetch edges by group_id
-        edges = await EntityEdge.get_by_group_ids(driver, [group_id], limit=limit)
-        logger.info(f'Retrieved {len(edges)} edges from knowledge graph')
-
-        if not edges:
-            logger.info('No edges found, returning empty graph')
-            return GraphData(nodes=[], edges=[], stats={'total_nodes': 0, 'total_edges': 0})
-
-        # Collect unique node UUIDs
-        node_uuids = {
-            uuid
-            for edge in edges
-            for uuid in [edge.source_node_uuid, edge.target_node_uuid]
-            if uuid
-        }
-
-        logger.info(f'Found {len(node_uuids)} unique nodes')
-
-        # Fetch all nodes by their UUIDs
-        nodes = await EntityNode.get_by_uuids(driver, list(node_uuids)) if node_uuids else []
-        logger.info(f'Retrieved {len(nodes)} node details')
-
-        # Build node lookup dictionary
+        entity_nodes = await EntityNode.get_by_group_ids(driver, [group_id])
+        episodic_nodes = await EpisodicNode.get_by_group_ids(driver, [group_id])
         nodes_dict = {
             node.uuid: GraphNode(
                 id=node.uuid,
@@ -53,11 +36,25 @@ class GraphVisualizationService:
                 type='entity',
                 summary=getattr(node, 'summary', None),
             )
-            for node in nodes
+            for node in entity_nodes
             if hasattr(node, 'uuid')
         }
+        nodes_dict.update(
+            {
+                node.uuid: GraphNode(
+                    id=node.uuid,
+                    label=getattr(node, 'name', 'Unknown'),
+                    type='episode',
+                    summary=None,
+                )
+                for node in episodic_nodes
+                if hasattr(node, 'uuid')
+            }
+        )
 
-        # Build edges list - only include edges with valid nodes
+        edges = await EntityEdge.get_by_group_ids(driver, [group_id], limit=limit)
+        logger.info(f'Retrieved {len(edges)} edges from knowledge graph')
+
         edges_list = [
             GraphEdge(
                 id=edge.uuid,
@@ -80,7 +77,17 @@ class GraphVisualizationService:
         return GraphData(nodes=nodes_list, edges=edges_list, stats=stats)
 
     async def _fetch_with_direct_driver(self, driver: Any, *, group_id: str, limit: int) -> GraphData:
-        query = """
+        node_query = """
+        MATCH (node)
+        WHERE node.group_id = $group_id
+        RETURN
+            node.uuid AS node_id,
+            node.name AS node_name,
+            node.summary AS node_summary,
+            labels(node) AS node_labels
+        ORDER BY node.created_at DESC, node.uuid ASC
+        """
+        edge_query = """
         MATCH (source)-[edge]->(target)
         WHERE edge.group_id = $group_id
         RETURN
@@ -95,17 +102,32 @@ class GraphVisualizationService:
             target.uuid AS target_node_id,
             target.name AS target_name,
             target.summary AS target_summary
+        ORDER BY edge.created_at DESC, edge.uuid ASC
         LIMIT $limit
         """
         node_map: dict[str, GraphNode] = {}
         edge_list: list[GraphEdge] = []
 
         async with driver.session() as session:
-            result = await session.run(query, group_id=group_id, limit=limit)
-            records = await result.data()
+            node_result = await session.run(node_query, group_id=group_id)
+            node_records = await node_result.data()
+            edge_result = await session.run(edge_query, group_id=group_id, limit=limit)
+            edge_records = await edge_result.data()
 
-        logger.info('Retrieved %s records from direct Neo4j query', len(records))
-        for record in records:
+        logger.info('Retrieved %s nodes and %s edges from direct Neo4j query', len(node_records), len(edge_records))
+        for record in node_records:
+            node_id = str(record.get('node_id') or '')
+            if not node_id:
+                continue
+
+            node_map[node_id] = GraphNode(
+                id=node_id,
+                label=str(record.get('node_name') or 'Unknown'),
+                type=_node_type_from_labels(record.get('node_labels')),
+                summary=record.get('node_summary'),
+            )
+
+        for record in edge_records:
             source_id = str(record.get('source_node_id') or record.get('source_uuid') or '')
             target_id = str(record.get('target_node_id') or record.get('target_uuid') or '')
             edge_id = str(record.get('edge_id') or '')
@@ -141,7 +163,7 @@ class GraphVisualizationService:
         logger.info(f'Graph data prepared: {stats["total_nodes"]} nodes, {stats["total_edges"]} edges')
         return GraphData(nodes=list(node_map.values()), edges=edge_list, stats=stats)
 
-    async def get_graph_data(self, group_id: str = 'default', limit: int = 50) -> GraphData:
+    async def get_graph_data(self, group_id: str = 'default', limit: int = 1000) -> GraphData:
         """
         Get graph data for visualization.
 

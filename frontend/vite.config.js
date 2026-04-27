@@ -17,7 +17,7 @@ export default defineConfig({
                     if (id.indexOf('node_modules') === -1) {
                         return;
                     }
-                    if (id.indexOf('reactflow') !== -1) {
+                    if (id.indexOf('sigma') !== -1 || id.indexOf('graphology') !== -1) {
                         return 'graph-vendor';
                     }
                     if (id.indexOf('react-markdown') !== -1 || id.indexOf('remark-gfm') !== -1) {

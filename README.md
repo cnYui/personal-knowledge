@@ -52,7 +52,7 @@ docs/       设计文档与实现方案
 
 ### 根目录 `.env`
 
-项目根目录的 `.env.example` 提供了 Docker Compose 级别的统一变量模板。首次启动前，建议复制一份：
+项目根目录的 `.env.example` 是项目唯一的运行时环境变量模板。首次启动前，建议复制一份：
 
 ```bash
 cp .env.example .env
@@ -69,18 +69,10 @@ copy .env.example .env
 - Docker 端口映射
 - PostgreSQL / Neo4j 默认账号密码
 - 前端构建时注入的 `VITE_API_BASE_URL`
-- 后端容器运行时使用的数据库、图谱、模型配置
+- 后端运行时使用的数据库、图谱、模型配置
+- 设置页保存的模型配置
 
-### 后端 `backend/.env.example`
-
-`backend/.env.example` 保留了后端单独运行时的参考配置，适合不使用 Docker、直接在本机 Python 环境启动后端时参考。
-
-换句话说：
-
-- `/.env.example`：给 Docker Compose / 一键启动脚本用
-- `backend/.env.example`：给纯后端本地运行用
-
-如果你在 Docker 模式下运行，一般只需要维护根目录 `.env`。
+后端本地运行和 Docker 运行都以根目录 `.env` 为配置源。Docker 容器内访问 PostgreSQL / Neo4j 时会由 Compose 注入容器网络地址，本机直接运行后端时继续使用 `.env` 中的 `localhost` 地址。
 
 ## Docker 启动方式
 
@@ -143,7 +135,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 - 前端代码修改可热更新
 - 后端 Python 代码修改可自动重载
 - PostgreSQL / Neo4j 仍由同一套基础服务提供
-- 由于 Compose 叠加时 `ports` 会追加而不是替换，开发模式前端额外暴露在 `http://localhost:5174`
+- 前端开发入口固定为 `http://localhost:5173`
 
 ## 一键启动脚本
 
@@ -177,7 +169,6 @@ chmod +x start.sh
 
 ```text
 前端: http://localhost:5173
-开发模式前端: http://localhost:5174
 后端健康检查: http://localhost:8000/health
 Neo4j Browser: http://localhost:7474
 PostgreSQL: localhost:5432
@@ -354,8 +345,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 请优先访问：
 
-- `http://localhost:5174`：Vite 开发服务器
-- `http://localhost:5173`：基础 Compose 中的 Nginx 前端容器映射
+- `http://localhost:5173`：Vite 开发服务器
 
 ### 6. 模型能力不可用
 
