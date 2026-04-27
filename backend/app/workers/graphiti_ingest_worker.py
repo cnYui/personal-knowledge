@@ -36,6 +36,11 @@ class GraphitiIngestWorker:
         self.repository = MemoryRepository()
         self.profile_refresh_scheduler = profile_refresh_scheduler or agent_knowledge_profile_refresh_scheduler
         self._task = None
+        self._queued_memory_ids: set[str] = set()
+        self._processing_memory_ids: set[str] = set()
+
+    def is_memory_active(self, memory_id: str) -> bool:
+        return memory_id in self._queued_memory_ids or memory_id in self._processing_memory_ids
 
     async def start(self):
         """Start the background worker loop."""
@@ -60,10 +65,21 @@ class GraphitiIngestWorker:
         await self.graphiti_client.close()
         logger.info('GraphitiIngestWorker stopped')
 
-    async def enqueue(self, memory_id: str):
+    async def enqueue(self, memory_id: str) -> bool:
         """Add a memory ID to the processing queue."""
-        await self.queue.put(memory_id)
+        if self.is_memory_active(memory_id):
+            logger.info('跳过重复构建队列请求: memory_id=%s', memory_id)
+            return False
+
+        self._queued_memory_ids.add(memory_id)
+        try:
+            await self.queue.put(memory_id)
+        except Exception:
+            self._queued_memory_ids.discard(memory_id)
+            raise
+
         logger.info('已加入构建队列: memory_id=%s, queue_size=%s', memory_id, self.queue.qsize())
+        return True
 
     async def _worker_loop(self):
         """Main worker loop that processes queue items."""
@@ -71,8 +87,19 @@ class GraphitiIngestWorker:
         while self.running:
             try:
                 memory_id = await asyncio.wait_for(self.queue.get(), timeout=1.0)
-                logger.info('Worker 开始处理队列任务: memory_id=%s, remaining_queue=%s', memory_id, self.queue.qsize())
-                await self._process_memory(memory_id)
+                self._queued_memory_ids.discard(memory_id)
+                if memory_id in self._processing_memory_ids:
+                    logger.warning('跳过重复执行中的队列任务: memory_id=%s', memory_id)
+                    self.queue.task_done()
+                    continue
+
+                self._processing_memory_ids.add(memory_id)
+                try:
+                    logger.info('Worker 开始处理队列任务: memory_id=%s, remaining_queue=%s', memory_id, self.queue.qsize())
+                    await self._process_memory(memory_id)
+                finally:
+                    self._processing_memory_ids.discard(memory_id)
+                    self.queue.task_done()
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
@@ -86,6 +113,14 @@ class GraphitiIngestWorker:
             memory = self.repository.get(db, memory_id)
             if not memory:
                 logger.error(f'Memory {memory_id} not found')
+                return
+
+            if memory.graph_status != 'pending':
+                logger.warning(
+                    '跳过非 pending 的残留队列任务: memory_id=%s, graph_status=%s',
+                    memory_id,
+                    memory.graph_status,
+                )
                 return
 
             logger.info('正在构建知识图谱: memory_id=%s, title=%s', memory_id, memory.title)

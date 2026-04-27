@@ -1,4 +1,5 @@
 """Local embedder using sentence-transformers for offline embedding generation."""
+import asyncio
 import hashlib
 import logging
 from collections.abc import Iterable
@@ -83,6 +84,11 @@ class LocalEmbedder(EmbedderClient):
 
         return values
 
+    def _encode_sync(self, input_data: str | list[str]):
+        if self.model is None:
+            raise RuntimeError('Local embedding model is not initialized')
+        return self.model.encode(input_data, convert_to_numpy=True)
+
     async def create(
         self, input_data: str | list[str] | Iterable[int] | Iterable[Iterable[int]]
     ) -> list[float]:
@@ -106,7 +112,7 @@ class LocalEmbedder(EmbedderClient):
         if self._use_fallback:
             return self._fallback_embedding(text)
 
-        embedding = self.model.encode(text, convert_to_numpy=True)
+        embedding = await asyncio.to_thread(self._encode_sync, text)
 
         return embedding.tolist()
 
@@ -124,6 +130,6 @@ class LocalEmbedder(EmbedderClient):
         if self._use_fallback:
             return [self._fallback_embedding(text) for text in input_data_list]
 
-        embeddings = self.model.encode(input_data_list, convert_to_numpy=True)
+        embeddings = await asyncio.to_thread(self._encode_sync, input_data_list)
 
         return [embedding.tolist() for embedding in embeddings]

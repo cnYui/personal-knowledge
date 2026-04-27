@@ -88,6 +88,15 @@ class MemoryService:
         memory = self.get_memory(db, memory_id)
         self.repository.delete(db, memory)
 
+    def _worker_has_active_memory(self, worker, memory_id: str) -> bool:
+        has_declared_method = hasattr(type(worker), 'is_memory_active')
+        has_instance_override = hasattr(worker, '__dict__') and 'is_memory_active' in worker.__dict__
+        if not has_declared_method and not has_instance_override:
+            return False
+
+        is_memory_active = getattr(worker, 'is_memory_active', None)
+        return bool(callable(is_memory_active) and is_memory_active(memory_id))
+
     async def add_to_graph(self, db: Session, memory_id: str, worker):
         """
         Queue a single memory for knowledge graph ingestion.
@@ -104,6 +113,9 @@ class MemoryService:
             HTTPException: If memory not found
         """
         memory = self.get_memory(db, memory_id)
+        if self._worker_has_active_memory(worker, memory_id):
+            logger.info('Memory %s already active in graph worker; skip duplicate enqueue', memory_id)
+            return memory
         
         # Pending with active retry keeps idempotent behavior; added supports re-submit.
         if memory.graph_status == 'pending':
@@ -113,8 +125,9 @@ class MemoryService:
                 return memory
 
             logger.warning('Memory %s is pending but no retry metadata; treat as zombie and re-enqueue', memory_id)
-            await worker.enqueue(memory_id)
-            logger.info('Memory %s zombie pending task re-enqueued', memory_id)
+            queued = await worker.enqueue(memory_id)
+            if queued:
+                logger.info('Memory %s zombie pending task re-enqueued', memory_id)
             return memory
         if memory.graph_status == 'added':
             logger.info('Memory %s already in graph; re-submit with soft overwrite mode', memory_id)
@@ -124,8 +137,9 @@ class MemoryService:
         db.commit()
         logger.info('Memory %s status set to pending; queued for graph ingestion', memory_id)
         
-        await worker.enqueue(memory_id)
-        logger.info('Memory %s enqueue request submitted to GraphitiIngestWorker', memory_id)
+        queued = await worker.enqueue(memory_id)
+        if queued:
+            logger.info('Memory %s enqueue request submitted to GraphitiIngestWorker', memory_id)
         
         return memory
 
@@ -153,7 +167,7 @@ class MemoryService:
         # Filter out active pending; include added for re-submit
         to_queue = []
         for memory in memories:
-            if memory.graph_status != 'pending':
+            if memory.graph_status != 'pending' and not self._worker_has_active_memory(worker, memory.id):
                 memory.graph_status = 'pending'
                 memory.graph_error = None
                 to_queue.append(memory.id)
@@ -162,8 +176,9 @@ class MemoryService:
         
         # Enqueue all
         for memory_id in to_queue:
-            await worker.enqueue(memory_id)
-            logger.info('Batch enqueue memory %s for graph ingestion', memory_id)
+            queued = await worker.enqueue(memory_id)
+            if queued:
+                logger.info('Batch enqueue memory %s for graph ingestion', memory_id)
         
         logger.info('Batch add-to-graph queued_count=%s memory_ids=%s', len(to_queue), to_queue)
         return {
@@ -190,8 +205,9 @@ class MemoryService:
 
         for memory in pending_memories:
             try:
-                await worker.enqueue(memory.id)
-                recovered_ids.append(memory.id)
+                queued = await worker.enqueue(memory.id)
+                if queued:
+                    recovered_ids.append(memory.id)
             except Exception as error:
                 memory.graph_status = 'failed'
                 memory.graph_error = f'Startup recovery failed: {error}'
