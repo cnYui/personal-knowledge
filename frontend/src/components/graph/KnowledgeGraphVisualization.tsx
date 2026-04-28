@@ -429,7 +429,10 @@ export function KnowledgeGraphVisualization({ data, selectedNodeId = null, onNod
         <Typography variant="overline" sx={{ color: '#8f887e', letterSpacing: '0.12em' }}>
           Knowledge Graph
         </Typography>
-        <Typography variant="body2" sx={{ color: '#2c2720', fontWeight: 600 }}>
+        <Typography
+          variant="body2"
+          sx={{ color: '#2c2720', fontWeight: 400, fontFamily: 'Lora, Georgia, serif' }}
+        >
           节点 {data.stats.total_nodes} / 关系 {data.stats.total_edges}
         </Typography>
         <Stack direction="row" spacing={1.5} sx={{ mt: 1.25, flexWrap: 'wrap' }}>
