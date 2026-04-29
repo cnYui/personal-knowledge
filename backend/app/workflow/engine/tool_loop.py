@@ -148,6 +148,15 @@ class ToolLoopEngine:
                     arguments=arguments,
                 )
                 if event_callback is not None:
+                    event_callback(
+                        {
+                            'type': 'tool_use',
+                            'id': str(tool_call.id),
+                            'name': str(tool_name),
+                            'input': arguments,
+                            'title': '检索知识图谱' if tool_name == 'graph_retrieval_tool' else str(tool_name),
+                        }
+                    )
                     query = str(arguments.get('query') or '').strip()
                     detail = query and f'使用查询“{query}”发起知识图谱检索。' or '发起知识图谱检索。'
                     event_callback(
@@ -165,6 +174,15 @@ class ToolLoopEngine:
                     step.result = result
                     self._append_tool_history(history, tool_call=tool_call, result=result)
                     if event_callback is not None:
+                        event_callback(
+                            {
+                                'type': 'tool_result',
+                                'tool_use_id': str(tool_call.id),
+                                'status': 'done',
+                                'output': result,
+                                'is_error': False,
+                            }
+                        )
                         retrieved_edge_count = result.get('retrieved_edge_count') if isinstance(result, dict) else None
                         has_enough_evidence = result.get('has_enough_evidence') if isinstance(result, dict) else None
                         empty_reason = result.get('empty_reason') if isinstance(result, dict) else None
@@ -210,6 +228,15 @@ class ToolLoopEngine:
                     step.error = str(exc)
                     self._append_tool_history(history, tool_call=tool_call, result={'error': str(exc)})
                     if event_callback is not None:
+                        event_callback(
+                            {
+                                'type': 'tool_result',
+                                'tool_use_id': str(tool_call.id),
+                                'status': 'error',
+                                'output': {'error': str(exc)},
+                                'is_error': True,
+                            }
+                        )
                         event_callback(
                             {
                                 'type': 'timeline',

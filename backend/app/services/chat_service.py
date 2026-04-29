@@ -158,6 +158,112 @@ class ChatService:
             preview_total=event.get('preview_total') if isinstance(event.get('preview_total'), int) else None,
         )
 
+    def _tool_event_chunk(self, event: dict[str, Any], order: int) -> str | None:
+        event_type = event.get('type')
+        if event_type == 'tool_use':
+            payload = {
+                'type': 'tool_use',
+                'content': {
+                    'id': str(event.get('id') or f'tool-{order}'),
+                    'name': str(event.get('name') or 'unknown_tool'),
+                    'input': event.get('input') if isinstance(event.get('input'), dict) else {},
+                    'title': str(event.get('title') or event.get('name') or '工具调用'),
+                    'order': order,
+                },
+            }
+            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+        if event_type == 'tool_result':
+            tool_use_id = str(event.get('tool_use_id') or '')
+            if not tool_use_id:
+                return None
+            payload = {
+                'type': 'tool_result',
+                'content': {
+                    'tool_use_id': tool_use_id,
+                    'status': 'error' if event.get('status') == 'error' or event.get('is_error') else 'done',
+                    'output': event.get('output'),
+                    'is_error': bool(event.get('is_error')),
+                    'order': order,
+                },
+            }
+            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+        return None
+
+    def _should_expose_citations(
+        self,
+        *,
+        agent_trace: dict[str, Any] | None,
+        references: list[ChatReference],
+        citation_result: CitationResult,
+    ) -> bool:
+        final_action = str((agent_trace or {}).get('final_action') or '')
+        if final_action == 'direct_general_answer':
+            return False
+        if not references:
+            return False
+        if not citation_result.citations and not citation_result.sentence_citations:
+            return False
+        return True
+
+    def _normalize_reference_payload(
+        self,
+        *,
+        agent_trace: dict[str, Any] | None,
+        references: list[ChatReference],
+        citation_result: CitationResult,
+    ) -> tuple[list[ChatReference], list[str], list[dict[str, Any]]]:
+        if not self._should_expose_citations(
+            agent_trace=agent_trace,
+            references=references,
+            citation_result=citation_result,
+        ):
+            return [], [], []
+
+        return (
+            references,
+            self._build_citation_section(citation_result),
+            list(citation_result.sentence_citations),
+        )
+
+    def _error_payload_from_exception(self, error: Exception) -> dict[str, Any]:
+        if isinstance(error, ModelAPIError):
+            return {
+                'type': 'error',
+                'content': error.message,
+                **error.to_dict(),
+            }
+
+        status_code = getattr(error, 'status_code', None) or getattr(error, 'http_status', None)
+        if status_code is not None:
+            normalized = ModelAPIError(
+                error_code='MODEL_API_UPSTREAM_ERROR' if int(status_code) >= 500 else 'UNKNOWN_ERROR',
+                message='模型服务暂时不可用，请稍后重试。' if int(status_code) >= 500 else str(error),
+                status_code=int(status_code),
+                details=str(error),
+                provider='',
+                retryable=int(status_code) >= 500,
+            )
+            return {
+                'type': 'error',
+                'content': normalized.message,
+                **normalized.to_dict(),
+            }
+
+        return {
+            'type': 'error',
+            'content': str(error),
+            'error_code': 'UNKNOWN_ERROR',
+            'message': str(error),
+            'details': '',
+            'provider': '',
+            'retryable': False,
+        }
+
+    def _error_chunk(self, error: Exception) -> str:
+        return f"data: {json.dumps(self._error_payload_from_exception(error), ensure_ascii=False)}\n\n"
+
     async def _run_chat_canvas(self, message: str, *, group_id: str = 'default') -> dict[str, Any]:
         if self.canvas_factory is None:
             raise RuntimeError('CanvasFactory is not configured')
@@ -203,11 +309,16 @@ class ChatService:
             reference_store_snapshot=reference_store_snapshot,
             workflow_debug=(agent_output or {}).get('workflow_debug'),
         )
+        references, citation_section, sentence_citations = self._normalize_reference_payload(
+            agent_trace=agent_trace,
+            references=references,
+            citation_result=citation_result,
+        )
         return {
             'answer': citation_result.answer,
             'references': references,
-            'citation_section': self._build_citation_section(citation_result),
-            'sentence_citations': list(citation_result.sentence_citations),
+            'citation_section': citation_section,
+            'sentence_citations': sentence_citations,
             'agent_trace': agent_trace,
         }
 
@@ -252,18 +363,32 @@ class ChatService:
             canvas.set_runtime_event_sink(runtime_event_sink)
 
             async def produce_canvas_events() -> None:
-                async for event in canvas.run():
-                    await queue.put(('canvas', event))
-                await queue.put(('done', None))
+                try:
+                    async for event in canvas.run():
+                        await queue.put(('canvas', event))
+                except Exception as error:
+                    await queue.put(('stream_error', error))
+                finally:
+                    await queue.put(('done', None))
 
             producer_task = asyncio.create_task(produce_canvas_events())
 
             while True:
                 source, payload = await queue.get()
+                if source == 'stream_error':
+                    yield self._error_chunk(payload)
+                    break
+
                 if source == 'done':
                     break
 
                 if source == 'runtime':
+                    tool_chunk = self._tool_event_chunk(payload, timeline_order)
+                    if tool_chunk:
+                        yield tool_chunk
+                        timeline_order += 1
+                        continue
+
                     chunk = self._timeline_chunk_from_runtime_event(payload, timeline_order)
                     if chunk:
                         yield chunk
@@ -337,6 +462,11 @@ class ChatService:
                 reference_store_snapshot=reference_store_snapshot,
                 workflow_debug=(agent_output or {}).get('workflow_debug'),
             )
+            references, citation_section, sentence_citations = self._normalize_reference_payload(
+                agent_trace=agent_trace,
+                references=references,
+                citation_result=citation_result,
+            )
             yield self._timeline_chunk(
                 event_id='citation',
                 kind='citation',
@@ -357,8 +487,8 @@ class ChatService:
             result = {
                 'answer': citation_result.answer,
                 'references': references,
-                'citation_section': self._build_citation_section(citation_result),
-                'sentence_citations': list(citation_result.sentence_citations),
+                'citation_section': citation_section,
+                'sentence_citations': sentence_citations,
                 'agent_trace': agent_trace,
             }
             for chunk in (
@@ -383,25 +513,9 @@ class ChatService:
             ):
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
-        except Exception as e:
-            logger.error(f"Error in streaming RAG: {e}", exc_info=True)
-            if isinstance(e, ModelAPIError):
-                error_chunk = {
-                    "type": "error",
-                    "content": e.message,
-                    **e.to_dict(),
-                }
-            else:
-                error_chunk = {
-                    "type": "error",
-                    "content": str(e),
-                    "error_code": "UNKNOWN_ERROR",
-                    "message": str(e),
-                    "details": "",
-                    "provider": "",
-                    "retryable": False,
-                }
-            yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
+        except Exception as error:
+            logger.error("Error in streaming RAG: %s", error, exc_info=True)
+            yield self._error_chunk(error)
 
     def list_messages(self, db: Session):
         return self.repository.list(db)

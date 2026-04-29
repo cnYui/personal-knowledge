@@ -116,3 +116,46 @@ async def test_tool_loop_marks_exceeded_max_rounds():
     assert result.exceeded_max_rounds is True
     assert result.answer == ''
     assert len(result.steps) == 1
+
+
+@pytest.mark.anyio
+async def test_tool_loop_emits_tool_use_and_tool_result_events():
+    client = FakeLLMClient(
+        [
+            FakeResponse(
+                FakeMessage(
+                    tool_calls=[FakeToolCall('tool-1', 'graph_retrieval_tool', '{"query":"Alice"}')]
+                )
+            ),
+            FakeResponse(FakeMessage(content='Alice 喜欢数学。')),
+        ]
+    )
+    engine = ToolLoopEngine(client, max_rounds=2)
+
+    async def fake_tool(query: str):
+        return {'summary': f'命中 {query}'}
+
+    events: list[dict] = []
+
+    await engine.run(
+        messages=[{'role': 'user', 'content': 'Alice 是谁？'}],
+        tool_schemas=[{'type': 'function', 'function': {'name': 'graph_retrieval_tool'}}],
+        tool_registry={'graph_retrieval_tool': fake_tool},
+        event_callback=events.append,
+    )
+
+    assert {
+        'type': 'tool_use',
+        'id': 'tool-1',
+        'name': 'graph_retrieval_tool',
+        'input': {'query': 'Alice'},
+        'title': '检索知识图谱',
+    }.items() <= events[0].items()
+    assert events[1]['type'] == 'timeline'
+    assert {
+        'type': 'tool_result',
+        'tool_use_id': 'tool-1',
+        'status': 'done',
+        'is_error': False,
+    }.items() <= events[2].items()
+    assert events[2]['output'] == {'summary': '命中 Alice'}

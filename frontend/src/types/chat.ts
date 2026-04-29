@@ -2,6 +2,7 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  contentBlocks?: ChatContentBlock[]
   created_at?: string | null
   references?: ChatReference[]
   citationSection?: string[]
@@ -22,6 +23,36 @@ export interface ChatTimelineEvent {
   preview_items?: string[]
   preview_total?: number
 }
+
+export interface ChatMarkdownBlock {
+  type: 'markdown'
+  id: string
+  text: string
+  order: number
+}
+
+export interface ChatToolUseBlock {
+  type: 'tool_use'
+  id: string
+  name: string
+  input: Record<string, unknown>
+  title?: string
+  order: number
+}
+
+export interface ChatToolResultBlock {
+  type: 'tool_result'
+  id: string
+  tool_use_id: string
+  status: 'running' | 'done' | 'error'
+  output?: unknown
+  is_error?: boolean
+  order: number
+}
+
+export type ChatContentBlock = ChatMarkdownBlock | ChatToolUseBlock | ChatToolResultBlock
+export type ChatToolUseEvent = Omit<ChatToolUseBlock, 'type'>
+export type ChatToolResultEvent = Omit<ChatToolResultBlock, 'type' | 'id'>
 
 export interface ChatReference {
   type: 'entity' | 'relationship'

@@ -11,7 +11,13 @@ import {
   sendChatMessageStream,
 } from '../services/chatApi'
 import { ApiErrorPayload } from '../types/api'
-import { ChatMessage, ChatTimelineEvent } from '../types/chat'
+import {
+  ChatContentBlock,
+  ChatMessage,
+  ChatTimelineEvent,
+  ChatToolResultEvent,
+  ChatToolUseEvent,
+} from '../types/chat'
 
 export function useChatMessages() {
   return useQuery({
@@ -57,15 +63,131 @@ export function useSendChatMessage() {
     )
   }
 
+  const sortContentBlocks = (blocks: ChatContentBlock[]) =>
+    [...blocks].sort((a, b) => {
+      if (a.order !== b.order) return a.order - b.order
+      const aKey = 'id' in a ? a.id : ''
+      const bKey = 'id' in b ? b.id : ''
+      return `${a.type}:${aKey}`.localeCompare(`${b.type}:${bKey}`)
+    })
+
+  const appendMarkdownBlock = (
+    blocks: ChatContentBlock[] | undefined,
+    chunk: string
+  ): ChatContentBlock[] => {
+    const currentBlocks = blocks ?? []
+    const lastBlock = currentBlocks[currentBlocks.length - 1]
+
+    if (lastBlock?.type === 'markdown') {
+      return [
+        ...currentBlocks.slice(0, -1),
+        {
+          ...lastBlock,
+          text: `${lastBlock.text}${chunk}`,
+        },
+      ]
+    }
+
+    return [
+      ...currentBlocks,
+      {
+        type: 'markdown',
+        id: generateId(),
+        text: chunk,
+        order: Date.now(),
+      },
+    ]
+  }
+
+  const ensureMarkdownContentBlocks = (
+    blocks: ChatContentBlock[] | undefined,
+    fullContent: string
+  ): ChatContentBlock[] => {
+    const currentBlocks = blocks ?? []
+    if (!fullContent) {
+      return currentBlocks
+    }
+    if (currentBlocks.some((block) => block.type === 'markdown')) {
+      return currentBlocks
+    }
+    return appendMarkdownBlock(currentBlocks, fullContent)
+  }
+
+  const upsertToolUseBlock = (
+    blocks: ChatContentBlock[] | undefined,
+    event: ChatToolUseEvent
+  ): ChatContentBlock[] => {
+    const nextBlocks = (blocks ?? []).filter(
+      (block) => !(block.type === 'tool_use' && block.id === event.id)
+    )
+    nextBlocks.push({
+      type: 'tool_use',
+      id: event.id,
+      name: event.name,
+      input: event.input,
+      title: event.title,
+      order: event.order,
+    })
+    return sortContentBlocks(nextBlocks)
+  }
+
+  const upsertToolResultBlock = (
+    blocks: ChatContentBlock[] | undefined,
+    event: ChatToolResultEvent
+  ): ChatContentBlock[] => {
+    const nextBlocks = (blocks ?? []).filter(
+      (block) => !(block.type === 'tool_result' && block.tool_use_id === event.tool_use_id)
+    )
+    nextBlocks.push({
+      type: 'tool_result',
+      id: `${event.tool_use_id}:result`,
+      tool_use_id: event.tool_use_id,
+      status: event.status,
+      output: event.output,
+      is_error: event.is_error,
+      order: event.order,
+    })
+    return sortContentBlocks(nextBlocks)
+  }
+
+  const finalizeAssistantErrorContent = (content: string, error: ApiErrorPayload) => {
+    const normalized = `错误: ${error.message}`
+    const trimmed = content.trim()
+    if (!trimmed) {
+      return normalized
+    }
+    if (trimmed.includes(error.message)) {
+      return content
+    }
+    return `${content}\n\n${normalized}`
+  }
+
   const upsertTimelineEvent = (events: ChatTimelineEvent[], nextEvent: ChatTimelineEvent): ChatTimelineEvent[] => {
-    const key = `${nextEvent.id}:${nextEvent.status}`
-    const filtered = events.filter((event) => `${event.id}:${event.status}` !== key)
+    const filtered = events.filter((event) => event.id !== nextEvent.id)
     filtered.push(nextEvent)
     return filtered.sort((a, b) => {
       if (a.order !== b.order) return a.order - b.order
       if (a.id !== b.id) return a.id.localeCompare(b.id)
       return a.status.localeCompare(b.status)
     })
+  }
+
+  const finalizeTimelineEvents = (
+    events: ChatTimelineEvent[] | undefined,
+    finalStatus: 'done' | 'error'
+  ): ChatTimelineEvent[] => {
+    if (!events?.length) {
+      return []
+    }
+
+    return events.map((event) =>
+      event.status === 'started'
+        ? {
+            ...event,
+            status: finalStatus,
+          }
+        : event
+    )
   }
 
   const stopTypingLoop = () => {
@@ -82,6 +204,7 @@ export function useSendChatMessage() {
       updateAssistantDraft(assistantId, (message) => ({
         ...message,
         isStreaming: false,
+        timeline: finalizeTimelineEvents(message.timeline, 'done'),
       }))
     }
     activeAssistantIdRef.current = null
@@ -122,6 +245,7 @@ export function useSendChatMessage() {
       updateAssistantDraft(assistantId, (message) => ({
         ...message,
         content: `${message.content}${nextSlice}`,
+        contentBlocks: appendMarkdownBlock(message.contentBlocks, nextSlice),
       }))
     }, 24)
   }
@@ -155,6 +279,7 @@ export function useSendChatMessage() {
       sentenceCitations: [],
       agentTrace: null,
       timeline: [],
+      contentBlocks: [],
       isStreaming: true,
     }
     activeAssistantIdRef.current = assistantId
@@ -199,17 +324,26 @@ export function useSendChatMessage() {
             agentTrace: trace,
           }))
         },
+        (toolUse) => {
+          updateAssistantDraft(assistantId, (draft) => ({
+            ...draft,
+            contentBlocks: upsertToolUseBlock(draft.contentBlocks, toolUse),
+          }))
+        },
+        (toolResult) => {
+          updateAssistantDraft(assistantId, (draft) => ({
+            ...draft,
+            contentBlocks: upsertToolResultBlock(draft.contentBlocks, toolResult),
+          }))
+        },
         (fullContent) => {
-          if (fullContent && !pendingBufferRef.current) {
-            updateAssistantDraft(assistantId, (draft) => ({
-              ...draft,
-              content: draft.content || fullContent,
-            }))
-          }
+          updateAssistantDraft(assistantId, (draft) => ({
+            ...draft,
+            content: fullContent || draft.content,
+            contentBlocks: ensureMarkdownContentBlocks(draft.contentBlocks, fullContent),
+          }))
           streamFinishedRef.current = true
-          if (!pendingBufferRef.current) {
-            finalizeStreamingMessage()
-          }
+          finalizeStreamingMessage()
         },
         (error) => {
           stopTypingLoop()
@@ -218,7 +352,8 @@ export function useSendChatMessage() {
           updateAssistantDraft(assistantId, (draft) => ({
             ...draft,
             isStreaming: false,
-            content: draft.content || `错误: ${error.message}`,
+            content: finalizeAssistantErrorContent(draft.content, error),
+            timeline: finalizeTimelineEvents(draft.timeline, 'error'),
           }))
           showApiErrorToast(error)
           activeAssistantIdRef.current = null
