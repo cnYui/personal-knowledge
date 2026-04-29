@@ -57,6 +57,18 @@ export function useSendChatMessage() {
     )
   }
 
+  const finalizeAssistantErrorContent = (content: string, error: ApiErrorPayload) => {
+    const normalized = `错误: ${error.message}`
+    const trimmed = content.trim()
+    if (!trimmed) {
+      return normalized
+    }
+    if (trimmed.includes(error.message)) {
+      return content
+    }
+    return `${content}\n\n${normalized}`
+  }
+
   const upsertTimelineEvent = (events: ChatTimelineEvent[], nextEvent: ChatTimelineEvent): ChatTimelineEvent[] => {
     const key = `${nextEvent.id}:${nextEvent.status}`
     const filtered = events.filter((event) => `${event.id}:${event.status}` !== key)
@@ -218,7 +230,7 @@ export function useSendChatMessage() {
           updateAssistantDraft(assistantId, (draft) => ({
             ...draft,
             isStreaming: false,
-            content: draft.content || `错误: ${error.message}`,
+            content: finalizeAssistantErrorContent(draft.content, error),
           }))
           showApiErrorToast(error)
           activeAssistantIdRef.current = null
