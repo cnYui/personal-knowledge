@@ -158,6 +158,43 @@ class ChatService:
             preview_total=event.get('preview_total') if isinstance(event.get('preview_total'), int) else None,
         )
 
+    def _error_payload_from_exception(self, error: Exception) -> dict[str, Any]:
+        if isinstance(error, ModelAPIError):
+            return {
+                'type': 'error',
+                'content': error.message,
+                **error.to_dict(),
+            }
+
+        status_code = getattr(error, 'status_code', None) or getattr(error, 'http_status', None)
+        if status_code is not None:
+            normalized = ModelAPIError(
+                error_code='MODEL_API_UPSTREAM_ERROR' if int(status_code) >= 500 else 'UNKNOWN_ERROR',
+                message='模型服务暂时不可用，请稍后重试。' if int(status_code) >= 500 else str(error),
+                status_code=int(status_code),
+                details=str(error),
+                provider='',
+                retryable=int(status_code) >= 500,
+            )
+            return {
+                'type': 'error',
+                'content': normalized.message,
+                **normalized.to_dict(),
+            }
+
+        return {
+            'type': 'error',
+            'content': str(error),
+            'error_code': 'UNKNOWN_ERROR',
+            'message': str(error),
+            'details': '',
+            'provider': '',
+            'retryable': False,
+        }
+
+    def _error_chunk(self, error: Exception) -> str:
+        return f"data: {json.dumps(self._error_payload_from_exception(error), ensure_ascii=False)}\n\n"
+
     async def _run_chat_canvas(self, message: str, *, group_id: str = 'default') -> dict[str, Any]:
         if self.canvas_factory is None:
             raise RuntimeError('CanvasFactory is not configured')
@@ -252,14 +289,22 @@ class ChatService:
             canvas.set_runtime_event_sink(runtime_event_sink)
 
             async def produce_canvas_events() -> None:
-                async for event in canvas.run():
-                    await queue.put(('canvas', event))
-                await queue.put(('done', None))
+                try:
+                    async for event in canvas.run():
+                        await queue.put(('canvas', event))
+                except Exception as error:
+                    await queue.put(('stream_error', error))
+                finally:
+                    await queue.put(('done', None))
 
             producer_task = asyncio.create_task(produce_canvas_events())
 
             while True:
                 source, payload = await queue.get()
+                if source == 'stream_error':
+                    yield self._error_chunk(payload)
+                    break
+
                 if source == 'done':
                     break
 
@@ -383,25 +428,9 @@ class ChatService:
             ):
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
-        except Exception as e:
-            logger.error(f"Error in streaming RAG: {e}", exc_info=True)
-            if isinstance(e, ModelAPIError):
-                error_chunk = {
-                    "type": "error",
-                    "content": e.message,
-                    **e.to_dict(),
-                }
-            else:
-                error_chunk = {
-                    "type": "error",
-                    "content": str(e),
-                    "error_code": "UNKNOWN_ERROR",
-                    "message": str(e),
-                    "details": "",
-                    "provider": "",
-                    "retryable": False,
-                }
-            yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
+        except Exception as error:
+            logger.error("Error in streaming RAG: %s", error, exc_info=True)
+            yield self._error_chunk(error)
 
     def list_messages(self, db: Session):
         return self.repository.list(db)
