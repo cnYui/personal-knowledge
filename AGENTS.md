@@ -72,3 +72,5 @@
 - 2026-04-27：环境变量收敛到根目录 `.env` 作为唯一运行时配置源；已移除 `backend/.env.example`，后端设置页和 Docker 后端都读写同一份根目录 `.env`
 - 2026-04-27：Graphiti 入图 worker 必须维护 memory 级别的排队/执行去重，禁止同一 memory 在 `pending` 期间重复入队；本地 sentence-transformers embedding 必须放到线程池执行，不能直接阻塞 FastAPI 事件循环
 - 2026-04-29：本地重启 `main` 分支时确认端口占用优先从 Docker 容器定位；`poco-claw-backend-1` 可占用 `8000`，旧 `pkb-frontend-dev` 可占用 `5173`。重启当前分支时必须确保数据库容器和后端/frontend 处于同一个 compose 网络，否则后端无法解析 `postgres/neo4j`
+- 2026-04-29：Chat 页面新消息自动滚动放在 `ChatMessageList` 内部，通过列表底部锚点在 `messages.length` 增加时触发；初次渲染不滚动，流式内容增量不触发滚动，避免打断用户阅读
+- 2026-04-29：Chat 流式失败收尾问题先按“结构化 SSE error + 前端稳定结束 loading”收口，范围只覆盖主流程与后台 task 异常的统一传递，不在本轮设计中扩展上游 `502` 重试/退避/降级策略
