@@ -18,6 +18,8 @@ backend/*.log
 frontend/*.log
 frontend/tsconfig.tsbuildinfo
 frontend/tsconfig.node.tsbuildinfo
+.codex-runtime/
+backend/test-*.db
 *.pid
 backend/test_graph_retrieval.db
 test_graph_retrieval.db

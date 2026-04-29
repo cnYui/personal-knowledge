@@ -76,3 +76,4 @@
 - 2026-04-29：Chat 流式失败收尾问题先按“结构化 SSE error + 前端稳定结束 loading”收口，范围只覆盖主流程与后台 task 异常的统一传递，不在本轮设计中扩展上游 `502` 重试/退避/降级策略
 - 2026-04-29：`chat` 页面清空聊天记录统一复用 `useClearChatMessages + ConfirmDialog`，危险操作放在页面顶部操作区，并在发送中或清空中禁用，避免误触和流式竞态
 - 2026-04-29：Chat 页面引用展示只以“正文实际引用到的证据”为准；消息结束后必须收尾残留 `started` timeline，Markdown 渲染优先于无结构 references 的句子模式
+- 2026-04-29：worktree 卫生规则补齐：`.codex-runtime/`、`backend/test-*.db` 一律视为本地产物忽略；`frontend/*.tsbuildinfo` 不得继续作为 tracked 文件存在
