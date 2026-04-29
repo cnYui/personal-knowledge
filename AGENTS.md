@@ -74,3 +74,4 @@
 - 2026-04-29：本地重启 `main` 分支时确认端口占用优先从 Docker 容器定位；`poco-claw-backend-1` 可占用 `8000`，旧 `pkb-frontend-dev` 可占用 `5173`。重启当前分支时必须确保数据库容器和后端/frontend 处于同一个 compose 网络，否则后端无法解析 `postgres/neo4j`
 - 2026-04-29：Chat 页面新消息自动滚动放在 `ChatMessageList` 内部，通过列表底部锚点在 `messages.length` 增加时触发；初次渲染不滚动，流式内容增量不触发滚动，避免打断用户阅读
 - 2026-04-29：Chat 流式失败收尾问题先按“结构化 SSE error + 前端稳定结束 loading”收口，范围只覆盖主流程与后台 task 异常的统一传递，不在本轮设计中扩展上游 `502` 重试/退避/降级策略
+- 2026-04-29：`chat` 页面清空聊天记录统一复用 `useClearChatMessages + ConfirmDialog`，危险操作放在页面顶部操作区，并在发送中或清空中禁用，避免误触和流式竞态
