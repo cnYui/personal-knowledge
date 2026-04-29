@@ -40,6 +40,12 @@
 - 如果设置页返回的模型配置和根目录 `.env` 不一致，优先检查 `docker inspect pkb-backend` 是否已经挂载 `/.env -> /workspace/.env`，旧容器可能仍保留历史环境变量覆盖项
 - 如果只想本地跑前端，也允许保留后端 Docker，再在当前工作区执行：`cd frontend && npm install && npm run dev -- --host 127.0.0.1 --port 5173`
 - 如果前端命令报 `vite is not recognized as an internal or external command`，说明本地依赖没有装完整；先执行 `npm install`，必要时直接用 `frontend/node_modules/.bin/vite.cmd --host 127.0.0.1 --port 5173 --strictPort`
+- 如果 `5173/8000` 显示被 `wslrelay` 或 `com.docker.backend` 占用，先用 `docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}"` 查真实容器。常见情况是 `poco-claw-backend-1` 占用 `8000`、旧 `pkb-frontend-dev` 占用 `5173`；按用户要求可直接 `docker stop <container>` 释放端口，不要杀 Docker Desktop 后台进程
+- 如果 `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` 报 `pkb-postgres` 或 `pkb-neo4j` 容器名冲突，说明已有旧数据库容器在运行。优先复用现有数据库容器，使用 `--no-deps` 只重建 `backend/frontend`，或先确认数据安全后再删除旧数据库容器
+- 如果 `pkb-backend` 日志出现 `psycopg.OperationalError: No address associated with hostname`，通常是旧 `pkb-postgres/pkb-neo4j` 不在当前 compose 网络，导致容器内无法解析 `postgres/neo4j`。可执行：`docker network connect --alias postgres <compose_default_network> pkb-postgres` 和 `docker network connect --alias neo4j <compose_default_network> pkb-neo4j`，然后 `docker restart pkb-backend`
+- 如果 `pkb-frontend-dev` 日志出现 `sh: npm: not found`，通常是本地 Docker 的 `node:20-alpine` 标签被错误构建成了生产 Nginx 镜像。处理方式：`docker pull node:20-alpine`，然后 `docker rm -f pkb-frontend-dev`，再用 dev compose 重新启动前端
+- 前端 dev 容器启动后会先执行 `npm ci`，期间 `5173` 可能已经监听但 Vite 还没响应；需要看 `docker logs pkb-frontend-dev`，等出现 `VITE ... ready` 后再验收
+- 后端 dev 容器启动会加载本地 embedding 模型并访问 HuggingFace，`8000` 可能先监听但 `/health` 暂时 empty reply；需要看 `docker logs pkb-backend`，等出现 `Application startup complete` 后再验收
 - 启动完成后必须同时验证：
 - 前端首页：`http://127.0.0.1:5173`
 - 后端健康检查：`http://127.0.0.1:8000/health`
@@ -58,6 +64,8 @@
 - 2026-04-27：知识图谱页面默认加载上限统一为 `1000` 条关系；后端图谱可视化先按 `group_id` 返回节点再返回稳定排序后的边，避免孤立节点因无关系被隐藏
 - 2026-04-27：知识图谱前端渲染层切换优先走 `sigma + graphology` 基础版，先保留现有 `GraphData` 和详情侧栏交互，再逐步迭代图片节点、自定义 shader 和布局 worker
 - 2026-04-27：Graph 页面已移除 `reactflow` 依赖与残留组件，知识图谱展示统一收敛到 `sigma + graphology` 一条渲染链路
+- 2026-04-27：Graph 节点视觉权重默认按 `degree` 做 `log2(degree + 1)` 尺寸映射，标签显示按相机缩放分三档控制 `top 10% / 25% / 50%` 分位数，`degree <= 1` 节点默认不常显标签
 - 2026-04-27：已修正 `docker-compose.dev.yml` 的前端端口覆盖方式，开发叠加模式下宿主机 `5173` 直接映射到 Vite `5173`，不再保留 `5174` 作为默认开发入口
 - 2026-04-27：环境变量收敛到根目录 `.env` 作为唯一运行时配置源；已移除 `backend/.env.example`，后端设置页和 Docker 后端都读写同一份根目录 `.env`
 - 2026-04-27：Graphiti 入图 worker 必须维护 memory 级别的排队/执行去重，禁止同一 memory 在 `pending` 期间重复入队；本地 sentence-transformers embedding 必须放到线程池执行，不能直接阻塞 FastAPI 事件循环
+- 2026-04-29：本地重启 `main` 分支时确认端口占用优先从 Docker 容器定位；`poco-claw-backend-1` 可占用 `8000`，旧 `pkb-frontend-dev` 可占用 `5173`。重启当前分支时必须确保数据库容器和后端/frontend 处于同一个 compose 网络，否则后端无法解析 `postgres/neo4j`

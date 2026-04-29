@@ -104,10 +104,18 @@ export function KnowledgeGraphVisualization({ data, selectedNodeId, onNodeClick 
               boxShadow: '0 12px 28px rgba(20, 20, 19, 0.05)',
             }}
           >
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 400 }}
+            >
               节点: {data.stats.total_nodes}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 400 }}
+            >
               关系: {data.stats.total_edges}
             </Typography>
           </Paper>
