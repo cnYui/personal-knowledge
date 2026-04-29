@@ -8,6 +8,10 @@
 
 `docs/superpowers/specs/2026-04-29-chat-layered-protocol-design.md`
 
+实现计划：
+
+`docs/superpowers/plans/2026-04-29-chat-layered-protocol-implementation-plan.md`
+
 ## 决策
 
 1. SSE 协议分为正文层和过程观测层。
