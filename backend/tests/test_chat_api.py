@@ -230,6 +230,28 @@ def build_stub_canvas(*, answer: str, references: list[ChatReference], trace: di
     return StubCanvas()
 
 
+def build_failing_stream_canvas(*, error: Exception, emit_timeline: bool = True):
+    class StubReferenceStore:
+        def snapshot(self):
+            return {'chunks': [], 'doc_aggs': [], 'graph_evidence': []}
+
+    class StubCanvas:
+        def __init__(self) -> None:
+            self.execution_path = ['begin', 'agent']
+            self.reference_store = StubReferenceStore()
+            self._runtime_event_sink = None
+
+        def set_runtime_event_sink(self, sink):
+            self._runtime_event_sink = sink
+
+        async def run(self):
+            if emit_timeline:
+                yield SimpleNamespace(event='node_started', node_id='agent', payload={})
+            raise error
+
+    return StubCanvas()
+
+
 def test_send_chat_message_returns_answer_and_persists_messages_via_agent(monkeypatch):
     call_log = []
     trace = {'mode': 'graph_rag', 'retrieval_rounds': 1, 'final_action': 'kb_grounded_answer', 'steps': []}
@@ -402,6 +424,49 @@ def test_rag_stream_returns_structured_model_error_payload(monkeypatch):
             + "\n\n"
         ]
     )
+
+
+def test_rag_stream_returns_structured_error_when_canvas_task_fails(monkeypatch):
+    failure = ModelAPIError(
+        error_code='MODEL_API_UPSTREAM_ERROR',
+        message='模型服务暂时不可用，请稍后重试。',
+        status_code=502,
+        details='502 bad gateway',
+        provider='cliproxyapi',
+        retryable=True,
+    )
+
+    def fake_create_chat_canvas(*, query: str, group_id: str = 'default', **kwargs):
+        return build_failing_stream_canvas(error=failure)
+
+    monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
+
+    with client_without_lifespan() as client:
+        with client.stream("POST", "/api/chat/stream", json={"message": "电池属于什么垃圾？"}) as response:
+            assert response.status_code == 200
+            body = ''.join(response.iter_text())
+
+    assert '"type": "timeline"' in body
+    assert '"type": "error"' in body
+    assert '模型服务暂时不可用，请稍后重试。' in body
+    assert '"type": "done"' not in body
+
+
+def test_rag_stream_keeps_existing_timeline_when_error_happens_after_stream_start(monkeypatch):
+    failure = RuntimeError('stream crashed after timeline')
+
+    def fake_create_chat_canvas(*, query: str, group_id: str = 'default', **kwargs):
+        return build_failing_stream_canvas(error=failure, emit_timeline=True)
+
+    monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
+
+    with client_without_lifespan() as client:
+        with client.stream("POST", "/api/chat/stream", json={"message": "你好"}) as response:
+            assert response.status_code == 200
+            body = ''.join(response.iter_text())
+
+    assert '"title": "理解问题"' in body
+    assert '"type": "error"' in body
 
 
 def test_rag_query_real_canvas_probe_sufficient_skips_tool_loop(monkeypatch):
