@@ -1,52 +1,73 @@
-# Chat Layered Protocol Implementation Plan
+# Chat 分层消息协议剩余实现计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在个人知识库聊天流中实现分层消息协议：Markdown 正文、内联工具卡片、结构化思考过程各自独立。
+**Goal:** 补齐聊天正文层 `tool_use/tool_result` 内联工具卡片，并同时修复当前 chat 页的引用误显、思考过程状态未结束、Markdown 误渲染问题。
 
-**Architecture:** 前端新增 `contentBlocks` 作为 assistant 正文层，`content` 字符串继续作为兼容字段；`timeline/agentTrace` 保持过程观测层。后端继续输出现有 `timeline/trace/content`，并把 runtime tool events 转成 `tool_use/tool_result` SSE 事件。
+**Architecture:** 保留现有 `timeline/trace` 思考过程链路，在前端新增 `contentBlocks` 作为正文层；后端在 tool loop 与 stream 转发层补发 `tool_use/tool_result`。另外对引用输出、timeline 收尾和 Markdown 判定做最小必要修正，避免继续把错误行为带进新协议。
 
 **Tech Stack:** React 18、TypeScript、MUI、Vitest、FastAPI、pytest、现有 SSE fetch 解析。
 
 ---
 
+## 当前差异
+
+当前代码与规格差异：
+
+1. 没有 `contentBlocks`、`tool_use/tool_result` 类型和 SSE 解析。
+2. `ChatMessageList` 只有 Markdown/句级引用渲染，没有工具卡片入口。
+3. `ToolLoopEngine` 不发工具 runtime event，`ChatService.rag_stream` 不转发工具 SSE。
+4. `probe-retrieval` 与 `probe-retrieval-retry` 只发 `started`，没有配对 `done/error`。
+5. `direct_general_answer` / `no_hit` 情况下，probe 阶段写入的引用仍可能进入 `references/citation_section`。
+6. `looksLikeMarkdown` 没识别有序列表和强调语法，导致带引用时会错误进入句子模式。
+
 ## 文件结构
 
-前端类型与解析：
+前端类型与消费：
 
 - Modify: `frontend/src/types/chat.ts`
 - Modify: `frontend/src/services/chatApi.ts`
 - Modify: `frontend/src/services/chatApi.test.ts`
-
-前端状态与渲染：
-
 - Modify: `frontend/src/hooks/useChat.ts`
+- Modify: `frontend/src/hooks/useChat.test.tsx`
+
+前端渲染：
+
 - Create: `frontend/src/components/chat/ToolCallBlock.tsx`
 - Create: `frontend/src/components/chat/AssistantContentBlocks.tsx`
 - Modify: `frontend/src/components/chat/ChatMessageList.tsx`
+- Create: `frontend/src/components/chat/AssistantContentBlocks.test.tsx`
 
-后端事件输出：
+后端事件与引用收口：
 
 - Modify: `backend/app/workflow/engine/tool_loop.py`
+- Modify: `backend/app/workflow/nodes/agent_node.py`
 - Modify: `backend/app/services/chat_service.py`
 - Modify: `backend/tests/workflow/engine/test_tool_loop.py`
 - Modify: `backend/tests/test_chat_api.py`
 
+上下文：
+
+- Modify: `docs/superpowers/specs/2026-04-29-chat-layered-protocol-design.md`
+- Modify: `docs/ai/context/2026-04-29-chat-layered-protocol.md`
+- Modify: `AGENTS.md`
+
 验证命令：
 
-- Frontend unit: `cd frontend && npm test -- --run src/services/chatApi.test.ts`
+- Frontend unit: `cd frontend && npm run test -- src/services/chatApi.test.ts src/hooks/useChat.test.tsx src/components/chat/AssistantContentBlocks.test.tsx`
 - Frontend build: `cd frontend && npm run build`
 - Backend unit: `cd backend && pytest tests/workflow/engine/test_tool_loop.py tests/test_chat_api.py -q`
 
 ## 实施约束
 
-1. `content` 仍然只保存 Markdown 文本，不能拼入工具输入、工具结果、thinking 或 reasoning。
-2. `ThinkingProcess` 不新增 raw thinking 展示分支，只继续消费 `timeline/trace`。
-3. 旧 localStorage 消息只有 `content: string` 时必须继续正常显示。
-4. 工具卡片只由 `tool_use/tool_result` 驱动，不能从 `timeline` 反推。
-5. 每个任务完成后单独提交，避免和工作区已有无关改动混在一起。
+1. `content` 只保存 Markdown 正文，不得混入工具输入输出。
+2. 工具卡片只由 `tool_use/tool_result` 事件驱动，不能从 `timeline` 反推。
+3. `ThinkingProcess` 不新增 raw thinking 展示分支。
+4. `direct_general_answer` 或无图谱证据时，不展示参考引用。
+5. 所有会显示“处理中”的 timeline 事件都必须有明确结束态，不能靠前端猜测。
+6. Markdown 判定修正后，只有纯文本答案才允许走句子模式；有列表、强调、标题、代码块等 Markdown 语法时必须走 `MarkdownContent`。
 
-### Task 1: 前端类型与 SSE 解析
+### Task 1: 前端补齐正文层事件类型与 SSE 解析
 
 **Files:**
 - Modify: `frontend/src/types/chat.ts`
@@ -79,6 +100,7 @@ it('sendChatMessageStream 会解析 tool_use 和 tool_result 事件', async () =
       controller.close()
     },
   })
+
   vi.stubGlobal(
     'fetch',
     vi.fn().mockResolvedValue(
@@ -91,12 +113,10 @@ it('sendChatMessageStream 会解析 tool_use 和 tool_result 事件', async () =
 
   const onToolUse = vi.fn()
   const onToolResult = vi.fn()
-  const onChunk = vi.fn()
-  const onComplete = vi.fn()
 
   await sendChatMessageStream(
     '你好',
-    onChunk,
+    vi.fn(),
     vi.fn(),
     vi.fn(),
     vi.fn(),
@@ -104,7 +124,7 @@ it('sendChatMessageStream 会解析 tool_use 和 tool_result 事件', async () =
     vi.fn(),
     onToolUse,
     onToolResult,
-    onComplete,
+    vi.fn(),
     vi.fn()
   )
 
@@ -122,18 +142,16 @@ it('sendChatMessageStream 会解析 tool_use 和 tool_result 事件', async () =
     is_error: false,
     order: 11,
   })
-  expect(onChunk).toHaveBeenCalledWith('最终回答')
-  expect(onComplete).toHaveBeenCalledWith('最终回答')
 })
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cd frontend && npm test -- --run src/services/chatApi.test.ts`
+Run: `cd frontend && npm run test -- src/services/chatApi.test.ts`
 
-Expected: FAIL，报错应指向 `sendChatMessageStream` 参数数量或 `onToolUse/onToolResult` 未调用。
+Expected: FAIL，`sendChatMessageStream` 还没有 `onToolUse/onToolResult` 参数或回调未触发。
 
-- [ ] **Step 3: 扩展聊天类型**
+- [ ] **Step 3: 扩展类型**
 
 在 `frontend/src/types/chat.ts` 增加：
 
@@ -165,800 +183,389 @@ export interface ChatToolResultBlock {
 }
 
 export type ChatContentBlock = ChatMarkdownBlock | ChatToolUseBlock | ChatToolResultBlock
-
 export type ChatToolUseEvent = Omit<ChatToolUseBlock, 'type'>
 export type ChatToolResultEvent = Omit<ChatToolResultBlock, 'type' | 'id'>
 ```
 
-然后给 `ChatMessage` 增加字段：
+并给 `ChatMessage` 增加：
 
 ```ts
 contentBlocks?: ChatContentBlock[]
 ```
 
-- [ ] **Step 4: 扩展 `sendChatMessageStream` 回调签名**
+- [ ] **Step 4: 扩展 `sendChatMessageStream`**
 
-在 `frontend/src/services/chatApi.ts` 的 import 中加入：
+在 `frontend/src/services/chatApi.ts`：
 
-```ts
-ChatToolResultEvent,
-ChatToolUseEvent,
-```
+1. 引入 `ChatToolUseEvent`、`ChatToolResultEvent`。
+2. 把函数签名扩展为 `onToolUse`、`onToolResult` 回调在 `onTrace` 和 `onComplete` 之间。
+3. 在 SSE 解析分支增加 `tool_use`、`tool_result` 处理。
+4. 未知事件继续忽略。
 
-把函数签名改为：
+- [ ] **Step 5: 同步旧测试调用参数**
 
-```ts
-export async function sendChatMessageStream(
-  message: string,
-  onChunk: (content: string) => void,
-  onReferences: (refs: ChatReference[]) => void,
-  onCitationSection: (items: string[]) => void,
-  onSentenceCitations: (items: SentenceCitation[]) => void,
-  onTimeline: (event: ChatTimelineEvent) => void,
-  onTrace: (trace: AgentTrace) => void,
-  onToolUse: (event: ChatToolUseEvent) => void,
-  onToolResult: (event: ChatToolResultEvent) => void,
-  onComplete: (fullContent: string) => void,
-  onError: (error: ApiErrorPayload) => void
-): Promise<void> {
-```
-
-在 SSE 分支里加：
-
-```ts
-          } else if (data.type === 'tool_use') {
-            const event = data.content as ChatToolUseEvent
-            if (event?.id && event?.name) {
-              onToolUse({
-                id: String(event.id),
-                name: String(event.name),
-                input: event.input && typeof event.input === 'object' ? event.input : {},
-                title: typeof event.title === 'string' ? event.title : undefined,
-                order: typeof event.order === 'number' ? event.order : Date.now(),
-              })
-            }
-          } else if (data.type === 'tool_result') {
-            const event = data.content as ChatToolResultEvent
-            if (event?.tool_use_id) {
-              onToolResult({
-                tool_use_id: String(event.tool_use_id),
-                status: event.status === 'error' ? 'error' : event.status === 'running' ? 'running' : 'done',
-                output: event.output,
-                is_error: Boolean(event.is_error),
-                order: typeof event.order === 'number' ? event.order : Date.now(),
-              })
-            }
-```
-
-- [ ] **Step 5: 更新已有测试调用参数**
-
-在 `frontend/src/services/chatApi.test.ts` 中，旧调用从：
-
-```ts
-await sendChatMessageStream('你好', vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn(), onError)
-```
-
-改为：
-
-```ts
-await sendChatMessageStream('你好', vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn(), onError)
-```
+把 `frontend/src/services/chatApi.test.ts` 现有 `sendChatMessageStream` 调用补齐两个 `vi.fn()` 占位。
 
 - [ ] **Step 6: 运行测试确认通过**
 
-Run: `cd frontend && npm test -- --run src/services/chatApi.test.ts`
+Run: `cd frontend && npm run test -- src/services/chatApi.test.ts`
 
 Expected: PASS。
 
-- [ ] **Step 7: 提交 Task 1**
-
-```bash
-git add frontend/src/types/chat.ts frontend/src/services/chatApi.ts frontend/src/services/chatApi.test.ts
-git commit -m "feat: parse chat tool sse events"
-```
-
-### Task 2: 前端消息状态写入 `contentBlocks`
+### Task 2: 前端把正文层事件写入 `contentBlocks`
 
 **Files:**
 - Modify: `frontend/src/hooks/useChat.ts`
+- Modify: `frontend/src/hooks/useChat.test.tsx`
 
-- [ ] **Step 1: 写失败测试或临时类型检查入口**
+- [ ] **Step 1: 扩展 hook 测试，覆盖 block 写入**
 
-当前仓库没有 hook 测试基座。本任务用 TypeScript build 作为失败验证。先在 `useChat.ts` 中引入 Task 1 的新类型，后续实现前运行 build 会因为未使用或签名不匹配失败：
+在 `frontend/src/hooks/useChat.test.tsx` 增加测试：
 
-```ts
-import { ChatContentBlock, ChatMessage, ChatTimelineEvent, ChatToolResultEvent, ChatToolUseEvent } from '../types/chat'
-```
+```tsx
+it('会把 markdown 增量和工具事件写入 contentBlocks', async () => {
+  const { sendChatMessageStream } = await import('../services/chatApi')
+  const queryClient = new QueryClient()
 
-- [ ] **Step 2: 运行 build 确认当前签名需要同步**
-
-Run: `cd frontend && npm run build`
-
-Expected: FAIL，错误应包含 `sendChatMessageStream` 参数数量不匹配，或新类型导入未使用。
-
-- [ ] **Step 3: 增加 block 工具函数**
-
-在 `useSendChatMessage` 内、`updateAssistantDraft` 后添加：
-
-```ts
-  const sortContentBlocks = (blocks: ChatContentBlock[]) =>
-    [...blocks].sort((a, b) => {
-      if (a.order !== b.order) return a.order - b.order
-      return `${a.type}:${'id' in a ? a.id : ''}`.localeCompare(`${b.type}:${'id' in b ? b.id : ''}`)
-    })
-
-  const appendMarkdownBlock = (blocks: ChatContentBlock[] = [], chunk: string): ChatContentBlock[] => {
-    const lastBlock = blocks[blocks.length - 1]
-    if (lastBlock?.type === 'markdown') {
-      return [
-        ...blocks.slice(0, -1),
-        {
-          ...lastBlock,
-          text: `${lastBlock.text}${chunk}`,
-        },
-      ]
+  vi.mocked(sendChatMessageStream).mockImplementation(
+    async (_message, onChunk, _onRefs, _onCitation, _onSentence, _onTimeline, _onTrace, onToolUse, onToolResult, onComplete) => {
+      onToolUse({
+        id: 'tool-1',
+        name: 'graph_retrieval_tool',
+        input: { query: '向量空间' },
+        title: '检索知识图谱',
+        order: 1,
+      })
+      onToolResult({
+        tool_use_id: 'tool-1',
+        status: 'done',
+        output: { summary: '命中 2 条证据' },
+        is_error: false,
+        order: 2,
+      })
+      onChunk('最终回答')
+      onComplete('最终回答')
     }
-    return [
-      ...blocks,
-      {
-        type: 'markdown',
-        id: generateId(),
-        text: chunk,
-        order: Date.now(),
-      },
-    ]
-  }
+  )
 
-  const upsertToolUseBlock = (blocks: ChatContentBlock[] = [], event: ChatToolUseEvent): ChatContentBlock[] => {
-    const nextBlocks = blocks.filter((block) => !(block.type === 'tool_use' && block.id === event.id))
-    nextBlocks.push({
-      type: 'tool_use',
-      id: event.id,
-      name: event.name,
-      input: event.input,
-      title: event.title,
-      order: event.order,
-    })
-    return sortContentBlocks(nextBlocks)
-  }
+  root = createRoot(container)
 
-  const upsertToolResultBlock = (blocks: ChatContentBlock[] = [], event: ChatToolResultEvent): ChatContentBlock[] => {
-    const resultId = `${event.tool_use_id}:result`
-    const nextBlocks = blocks.filter((block) => !(block.type === 'tool_result' && block.tool_use_id === event.tool_use_id))
-    nextBlocks.push({
-      type: 'tool_result',
-      id: resultId,
-      tool_use_id: event.tool_use_id,
-      status: event.status,
-      output: event.output,
-      is_error: event.is_error,
-      order: event.order,
-    })
-    return sortContentBlocks(nextBlocks)
-  }
+  await act(async () => {
+    root?.render(
+      <QueryClientProvider client={queryClient}>
+        <AppToastProvider>
+          <SendOnMount message="测试问题" />
+        </AppToastProvider>
+      </QueryClientProvider>
+    )
+    await Promise.resolve()
+  })
+
+  const messages = loadMessagesFromStorage()
+  const assistant = messages[messages.length - 1]
+
+  expect(assistant.content).toBe('最终回答')
+  expect(assistant.contentBlocks).toEqual([
+    expect.objectContaining({ type: 'tool_use', id: 'tool-1' }),
+    expect.objectContaining({ type: 'tool_result', tool_use_id: 'tool-1' }),
+    expect.objectContaining({ type: 'markdown', text: '最终回答' }),
+  ])
+})
 ```
 
-- [ ] **Step 4: 初始化 assistant message**
+- [ ] **Step 2: 运行测试确认失败**
 
-把 assistant message 初始化从：
+Run: `cd frontend && npm run test -- src/hooks/useChat.test.tsx`
+
+Expected: FAIL，`contentBlocks` 为空或 `sendChatMessageStream` 参数数量不匹配。
+
+- [ ] **Step 3: 在 `useChat.ts` 增加 block helper**
+
+增加：
 
 ```ts
-      content: '',
+const sortContentBlocks = (blocks: ChatContentBlock[]) => ...
+const appendMarkdownBlock = (blocks: ChatContentBlock[] | undefined, chunk: string) => ...
+const upsertToolUseBlock = (blocks: ChatContentBlock[] | undefined, event: ChatToolUseEvent) => ...
+const upsertToolResultBlock = (blocks: ChatContentBlock[] | undefined, event: ChatToolResultEvent) => ...
 ```
 
-改为：
+要求：
+
+1. Markdown 连续增量只合并到最后一个 `markdown` block。
+2. `tool_result` 允许先到，后续和 `tool_use` 通过 `tool_use_id` 合并。
+3. `contentBlocks` 按 `order` 排序。
+
+- [ ] **Step 4: 初始化 assistant message 的 `contentBlocks`**
+
+把 assistant draft 初始值改为：
 
 ```ts
-      content: '',
-      contentBlocks: [],
+content: '',
+contentBlocks: [],
 ```
 
-- [ ] **Step 5: 同步 `sendChatMessageStream` 调用**
+- [ ] **Step 5: 同步流式回调**
 
-在 `sendChatMessageStream` 的 `onChunk` 回调里，把当前逻辑：
+1. 在 `startTypingLoop` 的 `updateAssistantDraft` 中同步写入 `appendMarkdownBlock(...)`。
+2. 在 `sendChatMessageStream` 调用中接入 `onToolUse`、`onToolResult`。
+3. 在 `onComplete` 中，如果没有打字缓冲且还没有 Markdown block，用 `fullContent` 补一个 Markdown block。
 
-```ts
-        (chunk) => {
-          pendingBufferRef.current += chunk
-          startTypingLoop()
-        },
-```
+- [ ] **Step 6: 运行测试确认通过**
 
-保留不变。然后在 `startTypingLoop` 的 `updateAssistantDraft` 中把：
-
-```ts
-        content: `${message.content}${nextSlice}`,
-```
-
-改为：
-
-```ts
-        content: `${message.content}${nextSlice}`,
-        contentBlocks: appendMarkdownBlock(message.contentBlocks, nextSlice),
-```
-
-在 `onTrace` 回调后、`onComplete` 回调前插入两个新回调：
-
-```ts
-        (toolUse) => {
-          updateAssistantDraft(assistantId, (draft) => ({
-            ...draft,
-            contentBlocks: upsertToolUseBlock(draft.contentBlocks, toolUse),
-          }))
-        },
-        (toolResult) => {
-          updateAssistantDraft(assistantId, (draft) => ({
-            ...draft,
-            contentBlocks: upsertToolResultBlock(draft.contentBlocks, toolResult),
-          }))
-        },
-```
-
-- [ ] **Step 6: 完成时补齐无打字缓冲的 block**
-
-在 `onComplete` 的 `updateAssistantDraft` 中把：
-
-```ts
-              content: draft.content || fullContent,
-```
-
-改为：
-
-```ts
-              content: draft.content || fullContent,
-              contentBlocks: draft.contentBlocks?.length ? draft.contentBlocks : appendMarkdownBlock([], fullContent),
-```
-
-- [ ] **Step 7: 运行前端测试和 build**
-
-Run: `cd frontend && npm test -- --run src/services/chatApi.test.ts`
+Run: `cd frontend && npm run test -- src/hooks/useChat.test.tsx`
 
 Expected: PASS。
 
-Run: `cd frontend && npm run build`
-
-Expected: PASS。
-
-- [ ] **Step 8: 提交 Task 2**
-
-```bash
-git add frontend/src/hooks/useChat.ts
-git commit -m "feat: store chat content blocks"
-```
-
-### Task 3: 前端内联工具卡片渲染
+### Task 3: 前端渲染工具卡片，并修复 Markdown 误判
 
 **Files:**
 - Create: `frontend/src/components/chat/ToolCallBlock.tsx`
 - Create: `frontend/src/components/chat/AssistantContentBlocks.tsx`
+- Create: `frontend/src/components/chat/AssistantContentBlocks.test.tsx`
 - Modify: `frontend/src/components/chat/ChatMessageList.tsx`
 
-- [ ] **Step 1: 创建工具卡片组件**
+- [ ] **Step 1: 写失败测试，覆盖工具卡片与 Markdown 列表**
 
-创建 `frontend/src/components/chat/ToolCallBlock.tsx`：
-
-```tsx
-import BuildRoundedIcon from '@mui/icons-material/BuildRounded'
-import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded'
-import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded'
-import MoreHorizRoundedIcon from '@mui/icons-material/MoreHorizRounded'
-import { Box, Chip, Stack, Typography } from '@mui/material'
-
-import { ChatToolResultBlock, ChatToolUseBlock } from '../../types/chat'
-
-function summarizeValue(value: unknown): string {
-  if (value === null || value === undefined) return ''
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return String(value)
-  }
-}
-
-function resultLabel(result?: ChatToolResultBlock) {
-  if (!result) return '运行中'
-  if (result.status === 'error' || result.is_error) return '失败'
-  if (result.status === 'running') return '运行中'
-  return '完成'
-}
-
-export function ToolCallBlock({ use, result }: { use: ChatToolUseBlock; result?: ChatToolResultBlock }) {
-  const isError = result?.status === 'error' || result?.is_error
-  const isDone = Boolean(result) && !isError && result.status !== 'running'
-  const statusText = resultLabel(result)
-  const inputSummary = summarizeValue(use.input)
-  const outputSummary = summarizeValue(result?.output)
-
-  return (
-    <Box
-      sx={{
-        border: '1px solid rgba(20, 20, 19, 0.1)',
-        borderRadius: 1,
-        bgcolor: 'rgba(255, 255, 255, 0.72)',
-        px: 1.25,
-        py: 1,
-        my: 1,
-        boxShadow: '0 8px 18px rgba(20, 20, 19, 0.06)',
-      }}
-    >
-      <Stack spacing={0.75}>
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <Box sx={{ color: isError ? 'error.main' : isDone ? 'success.main' : 'text.secondary', display: 'flex' }}>
-            {isError ? <ErrorOutlineRoundedIcon fontSize="small" /> : isDone ? <CheckCircleRoundedIcon fontSize="small" /> : <MoreHorizRoundedIcon fontSize="small" />}
-          </Box>
-          <Typography variant="body2" sx={{ fontWeight: 700, flex: 1, minWidth: 0 }}>
-            {use.title || use.name}
-          </Typography>
-          <Chip size="small" icon={<BuildRoundedIcon />} label={statusText} color={isError ? 'error' : isDone ? 'success' : 'default'} />
-        </Stack>
-        {inputSummary ? (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', wordBreak: 'break-word' }}>
-            输入：{inputSummary}
-          </Typography>
-        ) : null}
-        {outputSummary ? (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', wordBreak: 'break-word' }}>
-            结果：{outputSummary}
-          </Typography>
-        ) : null}
-      </Stack>
-    </Box>
-  )
-}
-```
-
-- [ ] **Step 2: 创建 block 渲染组件**
-
-创建 `frontend/src/components/chat/AssistantContentBlocks.tsx`：
+创建 `frontend/src/components/chat/AssistantContentBlocks.test.tsx`：
 
 ```tsx
-import { Box } from '@mui/material'
+import { render, screen } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
 
-import { ChatContentBlock, ChatReference, SentenceCitation } from '../../types/chat'
-import { MarkdownContent } from './MarkdownContent'
-import { ToolCallBlock } from './ToolCallBlock'
+import { ChatContentBlock } from '../../types/chat'
+import { AssistantContentBlocks } from './AssistantContentBlocks'
 
-export function AssistantContentBlocks({
-  blocks,
-}: {
-  blocks: ChatContentBlock[]
-  references: ChatReference[]
-  sentenceCitations?: SentenceCitation[]
-}) {
-  const toolResults = new Map(
-    blocks
-      .filter((block) => block.type === 'tool_result')
-      .map((block) => [block.tool_use_id, block])
-  )
+describe('AssistantContentBlocks', () => {
+  it('会把 tool_use 和 tool_result 渲染成一张工具卡片', () => {
+    const blocks: ChatContentBlock[] = [
+      { type: 'tool_use', id: 'tool-1', name: 'graph_retrieval_tool', input: { query: '向量空间' }, title: '检索知识图谱', order: 1 },
+      { type: 'tool_result', id: 'tool-1:result', tool_use_id: 'tool-1', status: 'done', output: { summary: '命中 2 条证据' }, is_error: false, order: 2 },
+    ]
 
-  return (
-    <Box>
-      {blocks.map((block) => {
-        if (block.type === 'markdown') {
-          return <MarkdownContent key={block.id} content={block.text} />
-        }
-        if (block.type === 'tool_use') {
-          return <ToolCallBlock key={block.id} use={block} result={toolResults.get(block.id)} />
-        }
-        if (blocks.some((candidate) => candidate.type === 'tool_use' && candidate.id === block.tool_use_id)) {
-          return null
-        }
-        return (
-          <ToolCallBlock
-            key={block.id}
-            use={{
-              type: 'tool_use',
-              id: block.tool_use_id,
-              name: 'unknown_tool',
-              input: {},
-              title: '工具调用',
-              order: block.order - 1,
-            }}
-            result={block}
-          />
-        )
-      })}
-    </Box>
-  )
-}
+    render(<AssistantContentBlocks blocks={blocks} references={[]} />)
+
+    expect(screen.getByText('检索知识图谱')).toBeInTheDocument()
+    expect(screen.getByText(/命中 2 条证据/)).toBeInTheDocument()
+  })
+})
 ```
 
-- [ ] **Step 3: 接入 `ChatMessageList`**
-
-在 `frontend/src/components/chat/ChatMessageList.tsx` 增加 import：
+并在 `ChatMessageList.tsx` 增加用例或扩展现有组件测试，覆盖：
 
 ```ts
-import { AssistantContentBlocks } from './AssistantContentBlocks'
+content: '1. **内部结构**\n2. **运行机制**'
+references: [{ type: 'entity', name: 'Agent' }]
+sentenceCitations: []
 ```
 
-把 assistant 正文渲染从：
+Expected: 应走 `MarkdownContent`，页面上不出现字面量 `**内部结构**`。
 
-```tsx
-            <AssistantContent
-              content={message.content}
-              references={message.references ?? []}
-              sentenceCitations={message.sentenceCitations}
-            />
-```
+- [ ] **Step 2: 运行测试确认失败**
 
-改为：
+Run: `cd frontend && npm run test -- src/components/chat/AssistantContentBlocks.test.tsx`
 
-```tsx
-            {message.contentBlocks?.length ? (
-              <AssistantContentBlocks
-                blocks={message.contentBlocks}
-                references={message.references ?? []}
-                sentenceCitations={message.sentenceCitations}
-              />
-            ) : (
-              <AssistantContent
-                content={message.content}
-                references={message.references ?? []}
-                sentenceCitations={message.sentenceCitations}
-              />
-            )}
-```
+Expected: FAIL，组件不存在或渲染结果不符。
 
-- [ ] **Step 4: 运行前端 build**
+- [ ] **Step 3: 创建工具卡片组件**
+
+创建 `ToolCallBlock.tsx`，展示：
+
+1. 工具标题或工具名。
+2. 运行中/完成/失败状态。
+3. 输入摘要。
+4. 结果摘要或错误摘要。
+
+- [ ] **Step 4: 创建正文 block 渲染组件**
+
+创建 `AssistantContentBlocks.tsx`：
+
+1. `markdown` block 用 `MarkdownContent`。
+2. `tool_use` 查找配对的 `tool_result`，合并为一张卡片。
+3. 独立 `tool_result` 渲染为降级工具卡片。
+
+- [ ] **Step 5: 修复 Markdown 判定**
+
+在 `ChatMessageList.tsx`：
+
+1. 扩展 `looksLikeMarkdown`，至少识别有序列表 `^\d+\.`、强调 `**text**`、标题 `# `。
+2. 只有纯文本答案才允许句子模式。
+3. 若 `message.contentBlocks?.length` 存在，优先走 `AssistantContentBlocks`。
+
+- [ ] **Step 6: 运行前端测试和构建**
+
+Run: `cd frontend && npm run test -- src/components/chat/AssistantContentBlocks.test.tsx src/hooks/useChat.test.tsx src/services/chatApi.test.ts`
+
+Expected: PASS。
 
 Run: `cd frontend && npm run build`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交 Task 3**
-
-```bash
-git add frontend/src/components/chat/ToolCallBlock.tsx frontend/src/components/chat/AssistantContentBlocks.tsx frontend/src/components/chat/ChatMessageList.tsx
-git commit -m "feat: render inline chat tool cards"
-```
-
-### Task 4: 后端 tool loop 发出工具事件
+### Task 4: 后端发出 `tool_use/tool_result`，并修复 timeline 收尾
 
 **Files:**
 - Modify: `backend/app/workflow/engine/tool_loop.py`
+- Modify: `backend/app/workflow/nodes/agent_node.py`
 - Modify: `backend/tests/workflow/engine/test_tool_loop.py`
-
-- [ ] **Step 1: 写失败测试，确认 tool loop 发 `tool_use/tool_result`**
-
-在 `backend/tests/workflow/engine/test_tool_loop.py` 增加：
-
-```py
-@pytest.mark.anyio
-async def test_tool_loop_emits_tool_use_and_tool_result_events():
-    class StubClient:
-        def __init__(self) -> None:
-            self.chat = type(
-                'Chat',
-                (),
-                {
-                    'completions': type(
-                        'Completions',
-                        (),
-                        {
-                            'calls': [],
-                            'create': self.create,
-                        },
-                    )()
-                },
-            )()
-            self._calls = 0
-
-        def create(self, **kwargs):
-            self._calls += 1
-            if self._calls == 1:
-                return type('Response', (), {'choices': [type('Choice', (), {'message': FakeMessage(tool_calls=[FakeToolCall('tool-1', 'graph_retrieval_tool', '{"query":"Alice"}')])})]})()
-            return type('Response', (), {'choices': [type('Choice', (), {'message': FakeMessage(content='Alice 喜欢数学。')})]})()
-
-    async def fake_tool(query: str):
-        return {'summary': f'命中 {query}'}
-
-    events: list[dict] = []
-    engine = ToolLoopEngine(llm_client=StubClient())
-
-    await engine.run(
-        system_prompt='system',
-        user_prompt='user',
-        tool_schemas=[{'type': 'function', 'function': {'name': 'graph_retrieval_tool'}}],
-        tool_registry={'graph_retrieval_tool': fake_tool},
-        event_callback=events.append,
-    )
-
-    assert {
-        'type': 'tool_use',
-        'id': 'tool-1',
-        'name': 'graph_retrieval_tool',
-        'input': {'query': 'Alice'},
-        'title': '检索知识图谱',
-    }.items() <= events[0].items()
-    assert events[1]['type'] == 'timeline'
-    assert {
-        'type': 'tool_result',
-        'tool_use_id': 'tool-1',
-        'status': 'done',
-        'is_error': False,
-    }.items() <= events[2].items()
-    assert events[2]['output'] == {'summary': '命中 Alice'}
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-Run: `cd backend && pytest tests/workflow/engine/test_tool_loop.py::test_tool_loop_emits_tool_use_and_tool_result_events -q`
-
-Expected: FAIL，`events[0]['type']` 仍为 `timeline` 或缺少 `tool_use`。
-
-- [ ] **Step 3: 在工具执行前后发 runtime event**
-
-在 `backend/app/workflow/engine/tool_loop.py` 的每次工具调用循环中，解析 `arguments` 后、发 timeline 前插入：
-
-```py
-                if event_callback is not None:
-                    event_callback(
-                        {
-                            'type': 'tool_use',
-                            'id': str(tool_call.id),
-                            'name': str(tool_name),
-                            'input': arguments,
-                            'title': '检索知识图谱' if tool_name == 'graph_retrieval_tool' else str(tool_name),
-                        }
-                    )
-```
-
-在工具成功 `result = await self._call_tool(tool_impl, arguments)` 后插入：
-
-```py
-                    if event_callback is not None:
-                        event_callback(
-                            {
-                                'type': 'tool_result',
-                                'tool_use_id': str(tool_call.id),
-                                'status': 'done',
-                                'output': result,
-                                'is_error': False,
-                            }
-                        )
-```
-
-在 `except Exception as exc` 分支中、追加 tool history 前插入：
-
-```py
-                    if event_callback is not None:
-                        event_callback(
-                            {
-                                'type': 'tool_result',
-                                'tool_use_id': str(tool_call.id),
-                                'status': 'error',
-                                'output': {'error': str(exc)},
-                                'is_error': True,
-                            }
-                        )
-```
-
-- [ ] **Step 4: 运行 tool loop 测试**
-
-Run: `cd backend && pytest tests/workflow/engine/test_tool_loop.py -q`
-
-Expected: PASS。
-
-- [ ] **Step 5: 提交 Task 4**
-
-```bash
-git add backend/app/workflow/engine/tool_loop.py backend/tests/workflow/engine/test_tool_loop.py
-git commit -m "feat: emit tool runtime events"
-```
-
-### Task 5: 后端 SSE 转发 `tool_use/tool_result`
-
-**Files:**
-- Modify: `backend/app/services/chat_service.py`
 - Modify: `backend/tests/test_chat_api.py`
 
-- [ ] **Step 1: 写失败测试，确认 `/api/chat/stream` 返回工具事件**
+- [ ] **Step 1: 写失败测试，覆盖工具 runtime event**
 
-在 `backend/tests/test_chat_api.py` 中增加或扩展 `test_rag_stream_uses_agent_stream_path_and_returns_sse_payload`，让 stub canvas 发 runtime tool event。若 `build_stub_canvas` 支持 runtime events，就传入：
+在 `backend/tests/workflow/engine/test_tool_loop.py` 增加用例，断言 `event_callback` 收到：
 
-```py
-runtime_events=[
-    {
-        'type': 'tool_use',
-        'id': 'tool-1',
-        'name': 'graph_retrieval_tool',
-        'input': {'query': '向量空间'},
-        'title': '检索知识图谱',
-    },
-    {
-        'type': 'tool_result',
-        'tool_use_id': 'tool-1',
-        'status': 'done',
-        'output': {'summary': '命中 2 条证据'},
-        'is_error': False,
-    },
-]
-```
+1. `tool_use`
+2. `timeline started`
+3. `tool_result done`
+4. `timeline done`
 
-并增加断言：
+- [ ] **Step 2: 写失败测试，覆盖 probe timeline 必须结束**
 
-```py
-    assert '"type": "tool_use"' in body
-    assert '"id": "tool-1"' in body
-    assert '"type": "tool_result"' in body
-    assert '"tool_use_id": "tool-1"' in body
-```
+在 `backend/tests/test_chat_api.py` 增加断言：当触发 `probe-retrieval` 或 `probe-retrieval-retry` 时，SSE body 中同一 `id` 必须既有 `started` 也有 `done` 或 `error`，不能只停在 `started`。
 
-如果 `build_stub_canvas` 尚不支持 runtime events，就在该 helper 内增加 `runtime_events: list[dict] | None = None` 参数，并在 `run()` 开始时调用 sink：
+- [ ] **Step 3: 在 `tool_loop.py` 发 runtime tool event**
 
-```py
-        for runtime_event in runtime_events or []:
-            if self._runtime_event_sink:
-                self._runtime_event_sink(runtime_event)
-```
+在每次工具调用中补发：
 
-- [ ] **Step 2: 运行测试确认失败**
+1. 工具开始前 `tool_use`
+2. 成功后 `tool_result done`
+3. 异常后 `tool_result error`
 
-Run: `cd backend && pytest tests/test_chat_api.py::test_rag_stream_uses_agent_stream_path_and_returns_sse_payload -q`
+- [ ] **Step 4: 在 `agent_node.py` 补 probe 的完成态**
 
-Expected: FAIL，body 中没有 `tool_use` 或 `tool_result`。
+对 `probe-retrieval`、`probe-retrieval-retry`：
 
-- [ ] **Step 3: 增加工具事件 chunk 构造**
-
-在 `backend/app/services/chat_service.py` 中增加方法：
-
-```py
-    def _tool_event_chunk(self, event: dict[str, Any], order: int) -> str | None:
-        event_type = event.get('type')
-        if event_type == 'tool_use':
-            payload = {
-                'type': 'tool_use',
-                'content': {
-                    'id': str(event.get('id') or f'tool-{order}'),
-                    'name': str(event.get('name') or 'unknown_tool'),
-                    'input': event.get('input') if isinstance(event.get('input'), dict) else {},
-                    'title': str(event.get('title') or event.get('name') or '工具调用'),
-                    'order': order,
-                },
-            }
-            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        if event_type == 'tool_result':
-            payload = {
-                'type': 'tool_result',
-                'content': {
-                    'tool_use_id': str(event.get('tool_use_id') or ''),
-                    'status': 'error' if event.get('status') == 'error' or event.get('is_error') else 'done',
-                    'output': event.get('output'),
-                    'is_error': bool(event.get('is_error')),
-                    'order': order,
-                },
-            }
-            if not payload['content']['tool_use_id']:
-                return None
-            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        return None
-```
-
-- [ ] **Step 4: 在 runtime 分支转发工具事件**
-
-在 `rag_stream` 的 `if source == 'runtime':` 分支中，把当前逻辑：
-
-```py
-                    chunk = self._timeline_chunk_from_runtime_event(payload, timeline_order)
-                    if chunk:
-                        yield chunk
-                        timeline_order += 1
-                        timeline_emitted = True
-                    continue
-```
-
-改为：
-
-```py
-                    tool_chunk = self._tool_event_chunk(payload, timeline_order)
-                    if tool_chunk:
-                        yield tool_chunk
-                        timeline_order += 1
-                        continue
-
-                    chunk = self._timeline_chunk_from_runtime_event(payload, timeline_order)
-                    if chunk:
-                        yield chunk
-                        timeline_order += 1
-                        timeline_emitted = True
-                    continue
-```
+1. 发出 `started` 后，探测完成必须发 `done`。
+2. 若探测异常，发 `error`。
+3. `detail` 要包含最终判定：`sufficient`、`insufficient`、`no_hit`。
 
 - [ ] **Step 5: 运行后端测试**
-
-Run: `cd backend && pytest tests/test_chat_api.py::test_rag_stream_uses_agent_stream_path_and_returns_sse_payload tests/workflow/engine/test_tool_loop.py -q`
-
-Expected: PASS。
-
-- [ ] **Step 6: 提交 Task 5**
-
-```bash
-git add backend/app/services/chat_service.py backend/tests/test_chat_api.py
-git commit -m "feat: stream chat tool events"
-```
-
-### Task 6: 全量验证与上下文收口
-
-**Files:**
-- Modify: `docs/ai/context/2026-04-29-chat-layered-protocol.md`
-
-- [ ] **Step 1: 运行前端验证**
-
-Run: `cd frontend && npm test -- --run src/services/chatApi.test.ts`
-
-Expected: PASS。
-
-Run: `cd frontend && npm run build`
-
-Expected: PASS。
-
-- [ ] **Step 2: 运行后端验证**
 
 Run: `cd backend && pytest tests/workflow/engine/test_tool_loop.py tests/test_chat_api.py -q`
 
 Expected: PASS。
 
-- [ ] **Step 3: 手动联调固定端口**
+### Task 5: 后端收敛引用输出，避免无命中时展示参考引用
 
-按项目端口约定启动或复用服务：
+**Files:**
+- Modify: `backend/app/services/chat_service.py`
+- Modify: `backend/tests/test_chat_api.py`
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+- [ ] **Step 1: 写失败测试，覆盖无命中时不展示引用**
+
+在 `backend/tests/test_chat_api.py` 增加或扩展用例：
+
+1. `final_action = 'direct_general_answer'`
+2. `reference_store` 中可能存在 probe 阶段写入的 `graph_evidence`
+
+断言最终 SSE body 中：
+
+```py
+assert '"type": "references"' in body
+assert '"content": []' in body
 ```
 
-验证：
+并对 `citation_section`、`sentence_citations` 断言为空数组。
 
-```bash
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/health
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5173
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd backend && pytest tests/test_chat_api.py::test_rag_stream_hides_references_when_no_grounded_evidence -q`
+
+Expected: FAIL，当前仍会输出 probe 阶段引用。
+
+- [ ] **Step 3: 在 `chat_service.py` 增加引用输出门禁**
+
+增加一个统一判定，例如：
+
+```py
+def _should_expose_citations(self, *, agent_trace: dict[str, Any] | None, references: list[ChatReference], citation_result: CitationResult) -> bool:
+    final_action = str((agent_trace or {}).get('final_action') or '')
+    if final_action == 'direct_general_answer':
+        return False
+    if not references:
+        return False
+    if not citation_result.citations and not citation_result.sentence_citations:
+        return False
+    return True
 ```
 
-Expected: 后端健康检查 HTTP 200，前端 HTTP 200。
+然后在 `send_message` / `rag_query` / `rag_stream` 组装结果时统一处理：
 
-- [ ] **Step 4: 浏览器验收**
+1. 不允许暴露引用时，返回 `references=[]`
+2. `citation_section=[]`
+3. `sentence_citations=[]`
 
-在 `http://127.0.0.1:5173` 发起一次会触发图谱检索的问题，例如：
+- [ ] **Step 4: 运行测试确认通过**
 
-```text
-向量空间有什么用途？
+Run: `cd backend && pytest tests/test_chat_api.py -q`
+
+Expected: PASS。
+
+### Task 6: SSE 转发工具事件并更新上下文
+
+**Files:**
+- Modify: `backend/app/services/chat_service.py`
+- Modify: `docs/ai/context/2026-04-29-chat-layered-protocol.md`
+- Modify: `AGENTS.md`
+
+- [ ] **Step 1: 写失败测试，确认 `/api/chat/stream` 返回工具事件**
+
+扩展 `backend/tests/test_chat_api.py` 的 stream 用例，让 stub canvas 通过 `runtime_event_sink` 发：
+
+```py
+{
+    'type': 'tool_use',
+    'id': 'tool-1',
+    'name': 'graph_retrieval_tool',
+    'input': {'query': '向量空间'},
+    'title': '检索知识图谱',
+}
 ```
 
-Expected:
+以及对应 `tool_result`，断言 body 包含这两类 SSE。
 
-1. 思考过程区域显示 `timeline/trace` 步骤。
-2. 工具调用以卡片形式出现在 assistant 正文中。
-3. 最终回答仍按 Markdown 渲染。
-4. 页面不显示 raw thinking 或 raw reasoning 文本。
+- [ ] **Step 2: 在 `chat_service.py` 增加 `_tool_event_chunk`**
 
-- [ ] **Step 5: 更新上下文文档**
+把 runtime `tool_use/tool_result` 转成 SSE 正文层事件。
 
-在 `docs/ai/context/2026-04-29-chat-layered-protocol.md` 增加实现结果：
+- [ ] **Step 3: 在 `rag_stream` 的 runtime 分支接入工具事件**
+
+顺序要求：
+
+1. 优先尝试 `_tool_event_chunk`
+2. 否则再走 `_timeline_chunk_from_runtime_event`
+
+- [ ] **Step 4: 更新上下文文档**
+
+在 `docs/ai/context/2026-04-29-chat-layered-protocol.md` 写明：
+
+1. 原始内联卡片方案未落地的差异
+2. 三个新增问题的根因与收口方式
+3. 剩余实现范围
+
+并在 `AGENTS.md` 增加一条当前决策记忆：
 
 ```md
-## 实现结果
-
-实现后，聊天 SSE 正文层由 `content/tool_use/tool_result` 组成，过程观测层由 `timeline/trace` 组成。前端保留旧 `content` 字符串兼容 localStorage，同时使用 `contentBlocks` 渲染 Markdown 与内联工具卡片。
-
-验证命令：
-
-- `cd frontend && npm test -- --run src/services/chatApi.test.ts`
-- `cd frontend && npm run build`
-- `cd backend && pytest tests/workflow/engine/test_tool_loop.py tests/test_chat_api.py -q`
+- 2026-04-29：Chat 分层协议剩余实现除 `tool_use/tool_result` 内联卡片外，还必须同时修复三项行为：无命中时隐藏参考引用、probe 类 timeline 必须发完成态、带有序列表/强调语法的回答必须继续走 Markdown 渲染，不能误降级到句子模式
 ```
 
-- [ ] **Step 6: 提交 Task 6**
+- [ ] **Step 5: 全量验证**
 
-```bash
-git add docs/ai/context/2026-04-29-chat-layered-protocol.md
-git commit -m "docs: record chat layered protocol implementation"
-```
+Run: `cd frontend && npm run test -- src/services/chatApi.test.ts src/hooks/useChat.test.tsx src/components/chat/AssistantContentBlocks.test.tsx`
 
-## 自检清单
+Expected: PASS。
 
-1. Spec 覆盖：Task 1 和 Task 2 覆盖 SSE 前端消费与 `contentBlocks`；Task 3 覆盖工具卡片和 Markdown 回退；Task 4 和 Task 5 覆盖后端工具事件；Task 6 覆盖验证与上下文。
-2. raw thinking/reasoning：计划没有任何前端展示 raw thinking/reasoning 的步骤。
-3. 旧消息兼容：Task 3 保留 `contentBlocks` 不存在时走 `AssistantContent`。
-4. 工具卡片来源：只从 `tool_use/tool_result` 事件生成，不从 `timeline` 生成。
-5. 测试覆盖：前端解析、前端构建、后端 tool loop、后端 SSE 都有独立验证命令。
+Run: `cd frontend && npm run build`
+
+Expected: PASS。
+
+Run: `cd backend && pytest tests/workflow/engine/test_tool_loop.py tests/test_chat_api.py -q`
+
+Expected: PASS。
+
+## 自检
+
+1. Spec 覆盖：内联卡片、引用门禁、timeline 收尾、Markdown 修复都在任务中有对应实现。
+2. 当前代码差异：计划基于当前真实实现写，不依赖已经过期的旧函数签名。
+3. 测试覆盖：前端解析、前端状态、前端渲染、后端 tool loop、后端 SSE、无命中引用隐藏均有独立验证。
+4. raw thinking：没有新增任何 raw thinking/reasoning 展示分支。

@@ -186,7 +186,7 @@ def build_expected_trace(trace: dict, references: list[ChatReference]):
     }
 
 
-def build_stub_canvas(*, answer: str, references: list[ChatReference], trace: dict):
+def build_stub_canvas(*, answer: str, references: list[ChatReference], trace: dict, runtime_events: list[dict] | None = None):
     graph_evidence = [reference.model_dump() for reference in references]
 
     class StubReferenceStore:
@@ -204,6 +204,9 @@ def build_stub_canvas(*, answer: str, references: list[ChatReference], trace: di
 
         async def run(self):
             yield SimpleNamespace(event='workflow_started', node_id=None, payload={})
+            for runtime_event in runtime_events or []:
+                if self._runtime_event_sink:
+                    self._runtime_event_sink(runtime_event)
             yield SimpleNamespace(
                 event='node_finished',
                 node_id='agent',
@@ -365,6 +368,22 @@ def test_rag_stream_uses_agent_stream_path_and_returns_sse_payload(monkeypatch):
             answer='这是流式代理答案。',
             references=references,
             trace=trace,
+            runtime_events=[
+                {
+                    'type': 'tool_use',
+                    'id': 'tool-1',
+                    'name': 'graph_retrieval_tool',
+                    'input': {'query': '向量空间'},
+                    'title': '检索知识图谱',
+                },
+                {
+                    'type': 'tool_result',
+                    'tool_use_id': 'tool-1',
+                    'status': 'done',
+                    'output': {'summary': '命中 2 条证据'},
+                    'is_error': False,
+                },
+            ],
         )
 
     monkeypatch.setattr(chat_router.service.canvas_factory, 'create_chat_canvas', fake_create_chat_canvas)
@@ -377,6 +396,10 @@ def test_rag_stream_uses_agent_stream_path_and_returns_sse_payload(monkeypatch):
 
     assert call_log == [('向量空间有什么用途？', 'default')]
     assert '"type": "timeline"' in body
+    assert '"type": "tool_use"' in body
+    assert '"id": "tool-1"' in body
+    assert '"type": "tool_result"' in body
+    assert '"tool_use_id": "tool-1"' in body
     assert '"title": "理解问题"' in body
     assert '"title": "整理引用与轨迹"' in body
     assert '"type": "trace"' in body
@@ -536,6 +559,71 @@ def test_rag_query_real_canvas_probe_no_hit_retry_then_direct_general(monkeypatc
     assert payload['agent_trace']['tool_loop']['probe_decision'] == 'no_hit'
     assert payload['agent_trace']['tool_loop']['probe_queries'] == ['OpenAI 最近有什么动态？', 'OpenAI / 最近动态']
     assert payload['agent_trace']['tool_loop']['tool_steps'] == []
+
+
+def test_rag_stream_hides_references_when_no_grounded_evidence(monkeypatch):
+    class StubGraphRetrievalTool:
+        async def run(self, query: str, group_id: str = 'default'):
+            return GraphRetrievalResult(
+                context='',
+                references=[],
+                has_enough_evidence=False,
+                empty_reason='图谱中没有足够信息',
+                retrieved_edge_count=0,
+                group_id=group_id,
+            )
+
+    configure_real_canvas_chat_service(
+        monkeypatch,
+        llm_responses=[
+            FakeResponse(FakeMessage(content='OpenAI / 最近动态')),
+            FakeResponse(FakeMessage(content='这是基于通用模型的回答。')),
+        ],
+        graph_retrieval_tool=StubGraphRetrievalTool(),
+    )
+    stub_citation_postprocessor(monkeypatch)
+
+    with client_without_lifespan() as client:
+        with client.stream("POST", "/api/chat/stream", json={"message": "OpenAI 最近有什么动态？"}) as response:
+            assert response.status_code == 200
+            body = ''.join(response.iter_text())
+
+    assert '"type": "references"' in body
+    assert '"content": []' in body
+    assert '"type": "citation_section"' in body
+    assert '"type": "sentence_citations"' in body
+
+
+def test_rag_stream_probe_timeline_must_finish(monkeypatch):
+    class StubGraphRetrievalTool:
+        async def run(self, query: str, group_id: str = 'default'):
+            return GraphRetrievalResult(
+                context='',
+                references=[],
+                has_enough_evidence=False,
+                empty_reason='图谱中没有足够信息',
+                retrieved_edge_count=0,
+                group_id=group_id,
+            )
+
+    configure_real_canvas_chat_service(
+        monkeypatch,
+        llm_responses=[
+            FakeResponse(FakeMessage(content='OpenAI / 最近动态')),
+            FakeResponse(FakeMessage(content='这是基于通用模型的回答。')),
+        ],
+        graph_retrieval_tool=StubGraphRetrievalTool(),
+    )
+    stub_citation_postprocessor(monkeypatch)
+
+    with client_without_lifespan() as client:
+        with client.stream("POST", "/api/chat/stream", json={"message": "OpenAI 最近有什么动态？"}) as response:
+            assert response.status_code == 200
+            body = ''.join(response.iter_text())
+
+    assert body.count('"id": "probe-retrieval"') >= 2
+    assert '"status": "started"' in body
+    assert '"status": "done"' in body or '"status": "error"' in body
 
 
 def test_rag_query_real_canvas_probe_insufficient_enters_tool_loop(monkeypatch):

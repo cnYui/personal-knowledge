@@ -1,181 +1,185 @@
-# Chat 分层消息协议与工具卡片设计
+# Chat 分层消息协议剩余实现规格
 
-## 背景
+## 审阅结论
 
-当前个人知识库的聊天流式输出已经具备 `timeline`、`trace`、`content`、`done` 事件。前端会把 `timeline` 和 `trace` 挂到 assistant message 上，再由 `ThinkingProcess` 渲染结构化思考过程；正文内容继续由 Markdown 渲染。
+原设计要求 `content/tool_use/tool_result` 作为聊天正文层，`timeline/trace` 作为过程观测层。当前项目只完成了 `timeline/trace/content` 的基础流式展示，没有实现 `tool_use/tool_result` 内联工具卡片。
 
-这次需求是吸收 `poco-claw` 项目中消息输出的一个优点：`tool_use` 和 `tool_result` 在聊天正文中组成内联工具卡片，同时保留个人知识库现有的结构化思考面板，不把模型原始 thinking/reasoning 文本作为前端思考过程展示。
+这份文档重新收敛剩余需求：补齐工具事件协议、前端正文 block 模型、内联工具卡片渲染、后端 tool loop 工具事件输出。已存在的结构化思考过程不重写。
+
+## 当前已实现
+
+1. 后端 `/api/chat/stream` 已输出 `timeline`、`trace`、`references`、`citation_section`、`sentence_citations`、`content`、`done`、`error`。
+2. 前端 `sendChatMessageStream` 已解析 `timeline`、`trace`、引用、正文和错误。
+3. `useChat` 已把 `timeline` 和 `agentTrace` 写入 assistant message。
+4. `ThinkingProcess` 已基于 `timeline/trace` 渲染结构化思考过程。
+5. `ChatMessageList` 已继续把 assistant 正文作为 Markdown 或句级引用文本渲染。
+
+## 当前未实现
+
+1. `ChatMessage` 没有 `contentBlocks`。
+2. 前端没有 `ChatContentBlock`、`ChatToolUseEvent`、`ChatToolResultEvent` 类型。
+3. `sendChatMessageStream` 不识别 `tool_use/tool_result`。
+4. `useChat` 没有把 Markdown 增量和工具事件写入 `contentBlocks`。
+5. 没有 `ToolCallBlock` 或 `AssistantContentBlocks` 渲染入口。
+6. `ChatMessageList` 没有从 `contentBlocks` 渲染工具卡片。
+7. `ToolLoopEngine` 只发 `timeline` runtime event，不发 `tool_use/tool_result`。
+8. `ChatService.rag_stream` 只转发 runtime `timeline`，不会把工具事件转成 SSE。
+
+## 新增问题
+
+结合当前页面表现，还要把下面 3 个问题纳入同一轮收口：
+
+1. 无命中时仍展示“参考引用”。
+原因：probe 阶段写入的 `reference_store` 可能被后续 `citation_result` 和 `references` 继续暴露，即使最终答案是 `direct_general_answer` 或明确表示“没有找到相关信息”。
+
+2. 思考过程在正文已经输出完成后仍停留在“处理中”。
+原因：`probe-retrieval`、`probe-retrieval-retry` 这类 timeline 事件目前只发 `started`，没有配对 `done/error`，前端只能一直显示当前步骤未结束。
+
+3. Markdown 渲染错误。
+原因：`AssistantContent` 的 Markdown 判定漏掉了有序列表和强调语法，带引用时会错误进入句子模式，导致 `1.`、`**加粗**` 等语法以原文本显示。
 
 ## 目标
 
-1. SSE 协议显式分层：正文层负责用户可读回答和工具卡片，过程观测层负责思考过程与 agent 执行轨迹。
-2. `tool_use` 和 `tool_result` 组成内联卡片，展示在 assistant 消息正文中，并保持与 Markdown 正文的顺序关系。
-3. `content` 事件继续只表达 Markdown 文本片段，前端不从 `thinking` 或 `reasoning` 字段拼正文。
-4. “思考过程”区域只消费 `timeline` 和 `trace`，不直出 raw thinking 文本。
-5. 后端如果未来拿到模型原始 thinking/reasoning 文本，可以保留为后端调试字段，但不得进入前端 message 渲染模型。
+1. 有工具调用时，assistant 正文中按事件顺序显示内联工具卡片和 Markdown 回答。
+2. 没有工具调用时，assistant 正文仍按现有 Markdown/句级引用逻辑显示。
+3. “思考过程”继续只消费 `timeline/trace`。
+4. `content` 只保存 Markdown 正文，不混入工具输入、工具结果、thinking 或 reasoning。
+5. 旧 localStorage 消息没有 `contentBlocks` 时仍可正常打开。
+6. 如果最终没有图谱证据支撑答案，不展示参考引用。
+7. 所有会显示“处理中”的 timeline 步骤都必须有明确结束态。
+8. 带 Markdown 语法的回答必须继续走 Markdown 渲染，即使同时存在 references 或 sentence citations。
 
-## 非目标
+## 协议
 
-1. 不迁移 `poco-claw` 的完整 executor、callback、tool execution 落库体系。
-2. 不把个人知识库的聊天消息整体改成 `poco-claw` 的消息模型。
-3. 不在前端展示模型原始 thinking/reasoning 文本。
-4. 不改变当前引用、句级引用、citation section 的语义。
-5. 不要求第一阶段把历史 localStorage 消息全部重写为新结构，只需要兼容读取。
-
-## 协议设计
-
-SSE 事件分为两层。
-
-正文层事件：
+正文层 SSE：
 
 ```json
 {"type":"content","content":"Markdown 文本增量"}
-{"type":"tool_use","content":{"id":"tool-1","name":"knowledge_graph_search","input":{"query":"..."},"title":"检索知识图谱","order":20}}
-{"type":"tool_result","content":{"tool_use_id":"tool-1","status":"done","output":{"summary":"命中 8 条证据"},"is_error":false,"order":21}}
+{"type":"tool_use","content":{"id":"tool-1","name":"graph_retrieval_tool","input":{"query":"向量空间"},"title":"检索知识图谱","order":3}}
+{"type":"tool_result","content":{"tool_use_id":"tool-1","status":"done","output":{"summary":"命中 2 条证据"},"is_error":false,"order":5}}
 ```
 
-过程观测层事件：
+过程观测层 SSE：
 
 ```json
-{"type":"timeline","content":{"id":"tool-round-1","title":"检索第 1 轮","detail":"正在检索知识图谱","status":"running","order":20}}
+{"type":"timeline","content":{"id":"tool-round-1","kind":"retrieval","title":"检索第 1 轮","detail":"正在检索知识图谱","status":"started","order":4}}
 {"type":"trace","content":{"final_action":"kb_grounded_answer","tool_loop":{"tool_steps":[]}}}
-```
-
-现有事件继续保留：
-
-```json
-{"type":"references","content":[]}
-{"type":"citation_section","content":[]}
-{"type":"sentence_citations","content":[]}
-{"type":"done"}
-{"type":"error","message":"..."}
 ```
 
 约束：
 
-1. `content` 只允许表达最终回答正文或正文增量，不承载工具输入输出，也不承载 thinking/reasoning。
-2. `tool_use.id` 必须稳定，`tool_result.tool_use_id` 必须指向对应 `tool_use.id`。
-3. `order` 用于保持正文层 block 顺序；同一工具调用的 `tool_result` 应在对应 `tool_use` 之后。
-4. `timeline` 可描述工具执行进度，但前端不能用 `timeline` 反推工具卡片；工具卡片只由 `tool_use/tool_result` 事件驱动。
-5. `trace` 是完整或阶段性 agent 轨迹快照，允许覆盖更新。
+1. `tool_use.content.id` 使用底层工具调用 id，必须稳定。
+2. `tool_result.content.tool_use_id` 必须指向对应 `tool_use.content.id`。
+3. `order` 由 `ChatService.rag_stream` 统一分配，用于正文 block 和过程事件的相对排序。
+4. 工具卡片只能由 `tool_use/tool_result` 生成，不能从 `timeline` 反推。
+5. 未知 SSE 事件继续忽略，不中断当前回答。
+6. `direct_general_answer` 或无有效图谱证据时，`references/citation_section/sentence_citations` 必须全部为空。
+7. `timeline` 中任何 `started` 状态的可见步骤都必须在同一轮回答中收到 `done` 或 `error`。
 
-## 前端数据模型
+## 前端模型
 
-assistant message 新增正文 block 列表，和过程观测字段分离：
+新增正文 block：
 
 ```ts
-type ChatContentBlock =
-  | { type: 'markdown'; id: string; text: string; order: number }
-  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown>; title?: string; order: number }
-  | { type: 'tool_result'; id: string; tool_use_id: string; status: 'running' | 'done' | 'error'; output?: unknown; is_error?: boolean; order: number }
-
-type ChatMessage = {
+export interface ChatMarkdownBlock {
+  type: 'markdown'
   id: string
-  role: 'user' | 'assistant'
-  content: string
-  contentBlocks?: ChatContentBlock[]
-  timeline?: ChatTimelineEvent[]
-  agentTrace?: AgentTrace | null
-  isStreaming?: boolean
+  text: string
+  order: number
 }
+
+export interface ChatToolUseBlock {
+  type: 'tool_use'
+  id: string
+  name: string
+  input: Record<string, unknown>
+  title?: string
+  order: number
+}
+
+export interface ChatToolResultBlock {
+  type: 'tool_result'
+  id: string
+  tool_use_id: string
+  status: 'running' | 'done' | 'error'
+  output?: unknown
+  is_error?: boolean
+  order: number
+}
+
+export type ChatContentBlock = ChatMarkdownBlock | ChatToolUseBlock | ChatToolResultBlock
+export type ChatToolUseEvent = Omit<ChatToolUseBlock, 'type'>
+export type ChatToolResultEvent = Omit<ChatToolResultBlock, 'type' | 'id'>
 ```
 
-兼容策略：
+`ChatMessage` 新增：
 
-1. 旧消息只有 `content: string` 时，继续按纯 Markdown 渲染。
-2. 新消息优先渲染 `contentBlocks`；如果不存在，则回退渲染 `content`。
-3. 流式 `content` 事件到达时，追加或合并到当前最后一个 `markdown` block，同时继续维护 `content` 字符串用于兼容 localStorage 和复制逻辑。
-4. `tool_use/tool_result` 到达时写入 `contentBlocks`，并按 `order` 排序渲染。
-5. `timeline/agentTrace` 不进入 `contentBlocks`，继续传给 `ThinkingProcess`。
+```ts
+contentBlocks?: ChatContentBlock[]
+```
 
-## 渲染设计
+兼容规则：
 
-聊天消息渲染拆成两个稳定入口。
+1. `contentBlocks` 存在且非空时，assistant 正文优先按 block 渲染。
+2. `contentBlocks` 不存在时，继续走现有 `AssistantContent`。
+3. `content` 继续维护完整 Markdown 字符串，用于旧消息、localStorage、错误追加和未来复制功能。
+4. 流式打字缓冲每次写入 `content` 时，同步写入或合并当前最后一个 Markdown block。
+5. `AssistantContent` 的句子模式只适用于纯文本回答；一旦检测到 Markdown 结构，应强制走 `MarkdownContent`。
 
-过程观测入口：
+## 前端渲染
 
-1. `ThinkingProcess` 只接收 `timelineEvents`、`trace`、`active`。
-2. 继续保留现有 placeholder 动画、折叠展开、从 `trace.tool_loop.tool_steps` 回退构造时间线的能力。
-3. 不新增 raw thinking 文本展示分支。
+新增 `ToolCallBlock`：
 
-正文入口：
+1. 展示工具标题、工具名称、输入摘要、结果摘要。
+2. 支持运行中、完成、失败三种状态。
+3. 只有 `tool_use`、没有 `tool_result` 时显示运行中。
+4. 先收到 `tool_result` 时显示降级工具卡片，标题为“工具调用”。
 
-1. Markdown block 使用现有 `MarkdownContent` 渲染。
-2. `tool_use + tool_result` 合并为一张工具卡片，参考 `poco-claw` 的内联卡片体验：展示工具名称、输入摘要、执行状态、结果摘要、错误状态。
-3. 如果只有 `tool_use` 还没有 `tool_result`，卡片显示运行中状态。
-4. 如果先收到 `tool_result`，前端允许暂存，并在对应 `tool_use` 到达后合并；超时或缺失时展示降级卡片。
+新增 `AssistantContentBlocks`：
 
-## 后端职责
+1. Markdown block 使用现有 `MarkdownContent`。
+2. `tool_use` 查找同 `id` 的 `tool_result` 并合并成一张卡片。
+3. 独立 `tool_result` 降级渲染为未知工具卡片。
+4. 引用列表仍由 `ChatMessageList` 现有 `CitationList` 渲染，不混入工具卡片。
 
-后端流式服务负责把 agent 运行过程拆成两类事件。
+## 后端输出
 
-1. 生成最终回答时，只通过 `content` 发 Markdown。
-2. 工具开始执行时发 `tool_use`，工具完成或失败时发 `tool_result`。
-3. agent 执行过程中的可解释进度继续发 `timeline`。
-4. agent 完整轨迹或阶段性轨迹继续发 `trace`。
-5. 如果底层模型或运行时返回 raw thinking/reasoning，后端允许在日志或调试结构中保留，但不得通过 `content`、`tool_use`、`tool_result`、`timeline` 直接下发原文。
+`ToolLoopEngine` 在每次工具调用中发 runtime event：
 
-## 错误处理
+1. 工具开始前发 `tool_use`。
+2. 工具成功后发 `tool_result`，`status='done'`。
+3. 工具异常后发 `tool_result`，`status='error'`、`is_error=true`。
+4. 原有 `timeline` 事件保留。
+5. probe 类 timeline 事件必须显式补发 `done/error`。
 
-1. 工具执行失败时发 `tool_result`，其中 `status` 为 `error`，`is_error` 为 `true`。
-2. 工具失败不一定终止整轮回答；是否终止由后端继续通过 `timeline`、`trace` 和最终 `content/error` 表达。
-3. 整体请求失败继续使用现有 `error` 事件，前端结束流式状态并保留已收到的 timeline 和工具卡片。
-4. 前端解析未知 SSE 事件时忽略，并保留 console warning，避免破坏旧客户端。
+`ChatService.rag_stream` 转发 runtime event：
 
-## 迁移策略
-
-第一阶段：协议与前端兼容层
-
-1. 定义 `ChatContentBlock` 类型。
-2. 扩展 `sendChatMessageStream`，识别 `tool_use` 和 `tool_result`。
-3. 扩展 `useChat`，把正文层事件写入 `contentBlocks`，同时维护旧 `content` 字符串。
-4. 新增工具卡片渲染组件，并在 `ChatMessageList` 中接入。
-
-第二阶段：后端工具事件输出
-
-1. 在 agent/tool loop 执行点补发 `tool_use/tool_result`。
-2. 保持现有 `timeline/trace/content` 事件不变。
-3. 为工具错误、空结果、部分结果补齐统一 result summary。
-
-第三阶段：历史兼容和清理
-
-1. 保留旧 localStorage 消息读取。
-2. 确认所有新 assistant 消息都能从 `contentBlocks` 渲染。
-3. 复制、清空、错误重试等消息操作优先使用 Markdown 正文，工具卡片不混入纯文本正文。
+1. `tool_use/tool_result` 转成 SSE 正文层事件。
+2. `timeline` 继续转成过程观测层事件。
+3. 工具事件转发后递增同一个 `timeline_order`，保证前端 block 和过程事件有稳定相对顺序。
+4. 对 `direct_general_answer` 或无有效图谱证据的结果，统一把 `references/citation_section/sentence_citations` 收敛为空数组。
 
 ## 验收标准
 
-1. 普通问答没有工具调用时，用户看到的正文仍是纯 Markdown。
-2. 有工具调用时，聊天正文中能按顺序看到工具卡片和 Markdown 回答。
-3. 工具卡片能展示运行中、完成、失败三类状态。
-4. “思考过程”区域只展示 `timeline/trace` 结构化过程。
-5. 前端不会展示 raw thinking/reasoning 原文。
-6. 旧 localStorage 聊天记录仍能打开并显示。
-7. 后端仍能发送现有 `references`、`citation_section`、`sentence_citations`，引用展示不回退。
-8. SSE 解析遇到未知事件不会中断当前回答。
+1. 普通问答没有工具调用时，正文仍是纯 Markdown。
+2. 工具调用发生时，assistant 正文中出现内联工具卡片。
+3. 工具卡片能展示运行中、完成、失败状态。
+4. “思考过程”仍只显示 `timeline/trace`。
+5. 前端不显示 raw thinking/reasoning 原文。
+6. 旧 localStorage 消息继续显示。
+7. 引用、citation section、句级引用不回退。
+8. 前后端测试和前端构建通过。
+9. 答案明确表示“没有找到相关信息”时，页面不展示参考引用。
+10. 正文完全输出后，思考过程不再保留“处理中”状态。
+11. 带有序列表、加粗等 Markdown 的回答能正确渲染，不显示字面量 Markdown 标记。
 
 ## 需要覆盖的测试
 
-1. `sendChatMessageStream` 能解析 `tool_use/tool_result/content/timeline/trace/done/error`。
-2. `useChat` 能把 Markdown 增量合并进 `contentBlocks` 和旧 `content`。
-3. 工具 result 先于 use 到达时，最终能正确合并。
-4. 旧 `content: string` 消息仍走 Markdown 渲染。
-5. `ThinkingProcess` 不依赖正文 block，仍只由 `timeline/trace` 驱动。
-
-## 相关文件
-
-现有前端流式消费入口：
-
-`frontend/src/services/chatApi.ts`
-
-现有消息状态更新入口：
-
-`frontend/src/hooks/useChat.ts`
-
-现有结构化思考过程组件：
-
-`frontend/src/components/chat/ThinkingProcess.tsx`
-
-现有后端 SSE 事件源：
-
-`backend/app/services/chat_service.py`
+1. `sendChatMessageStream` 解析 `tool_use/tool_result`。
+2. `useSendChatMessage` 把 Markdown 增量和工具事件写入 `contentBlocks`。
+3. `ChatMessageList` 在存在 `contentBlocks` 时渲染工具卡片，旧消息仍渲染 Markdown。
+4. `ToolLoopEngine` 发出 `tool_use/tool_result` runtime event。
+5. `/api/chat/stream` SSE body 包含 `tool_use/tool_result`。
+6. `direct_general_answer` / `no_hit` 时，`references/citation_section/sentence_citations` 为空。
+7. `probe-retrieval`、`probe-retrieval-retry` 等 timeline 事件有配对完成态。
+8. 含有序列表和强调语法的回答在存在引用时仍走 Markdown 渲染。

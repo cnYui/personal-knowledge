@@ -66,7 +66,19 @@ describe('useSendChatMessage', () => {
     const queryClient = new QueryClient()
 
     sendMock.mockImplementation(
-      async (_message, onChunk, _onRefs, _onCitation, _onSentence, onTimeline, _onTrace, _onComplete, onError) => {
+      async (
+        _message,
+        onChunk,
+        _onRefs,
+        _onCitation,
+        _onSentence,
+        onTimeline,
+        _onTrace,
+        _onToolUse,
+        _onToolResult,
+        _onComplete,
+        onError
+      ) => {
         onTimeline({
           id: 'understand-question',
           kind: 'understand',
@@ -128,7 +140,19 @@ describe('useSendChatMessage', () => {
     const queryClient = new QueryClient()
 
     vi.mocked(sendChatMessageStream).mockImplementation(
-      async (_message, _onChunk, _onRefs, _onCitation, _onSentence, _onTimeline, _onTrace, _onComplete, onError) => {
+      async (
+        _message,
+        _onChunk,
+        _onRefs,
+        _onCitation,
+        _onSentence,
+        _onTimeline,
+        _onTrace,
+        _onToolUse,
+        _onToolResult,
+        _onComplete,
+        onError
+      ) => {
         onError({
           error_code: 'UNKNOWN_ERROR',
           message: '请求失败，请稍后重试。',
@@ -149,10 +173,111 @@ describe('useSendChatMessage', () => {
       await Promise.resolve()
     })
 
+    await act(async () => {
+      vi.runOnlyPendingTimers()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
     const messages = loadMessagesFromStorage()
     const assistant = messages[messages.length - 1]
 
     expect(assistant.content).toBe('错误: 请求失败，请稍后重试。')
     expect(assistant.isStreaming).toBe(false)
+  })
+
+  it('会把 markdown 增量和工具事件写入 contentBlocks', async () => {
+    const { sendChatMessageStream } = await import('../services/chatApi')
+    const queryClient = new QueryClient()
+
+    vi.mocked(sendChatMessageStream).mockImplementation(
+      async (_message, onChunk, _onRefs, _onCitation, _onSentence, _onTimeline, _onTrace, onToolUse, onToolResult, onComplete) => {
+        onToolUse({
+          id: 'tool-1',
+          name: 'graph_retrieval_tool',
+          input: { query: '向量空间' },
+          title: '检索知识图谱',
+          order: 1,
+        })
+        onToolResult({
+          tool_use_id: 'tool-1',
+          status: 'done',
+          output: { summary: '命中 2 条证据' },
+          is_error: false,
+          order: 2,
+        })
+        onChunk('最终回答')
+        onComplete('最终回答')
+      }
+    )
+
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <AppToastProvider>
+            <SendOnMount message="测试问题" />
+          </AppToastProvider>
+        </QueryClientProvider>
+      )
+      await Promise.resolve()
+    })
+
+    const messages = loadMessagesFromStorage()
+    const assistant = messages[messages.length - 1]
+
+    expect(assistant.content).toBe('最终回答')
+    expect(assistant.contentBlocks).toEqual([
+      expect.objectContaining({ type: 'tool_use', id: 'tool-1' }),
+      expect.objectContaining({ type: 'tool_result', tool_use_id: 'tool-1' }),
+      expect.objectContaining({ type: 'markdown', text: '最终回答' }),
+    ])
+  })
+
+  it('流式完成时会收尾仍处于 started 的时间线步骤', async () => {
+    const { sendChatMessageStream } = await import('../services/chatApi')
+    const queryClient = new QueryClient()
+
+    vi.mocked(sendChatMessageStream).mockImplementation(
+      async (_message, onChunk, _onRefs, _onCitation, _onSentence, onTimeline, _onTrace, _onToolUse, _onToolResult, onComplete) => {
+        onTimeline({
+          id: 'probe-retrieval',
+          kind: 'retrieval',
+          title: '预检知识库',
+          detail: '先用原始问题做一轮轻量探测。',
+          status: 'started',
+          order: 1,
+        })
+        onChunk('最终回答')
+        onComplete('最终回答')
+      }
+    )
+
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <AppToastProvider>
+            <SendOnMount message="测试问题" />
+          </AppToastProvider>
+        </QueryClientProvider>
+      )
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      vi.runOnlyPendingTimers()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const messages = loadMessagesFromStorage()
+    const assistant = messages[messages.length - 1]
+    const probeEvent = assistant.timeline?.find((event) => event.id === 'probe-retrieval')
+
+    expect(assistant.isStreaming).toBe(false)
+    expect(probeEvent?.status).toBe('done')
   })
 })

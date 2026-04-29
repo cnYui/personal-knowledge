@@ -1,6 +1,8 @@
+import { useEffect, useRef } from 'react'
 import { Box, Paper, Stack, Tooltip, Typography } from '@mui/material'
 
 import { ChatMessage, ChatReference, SentenceCitation } from '../../types/chat'
+import { AssistantContentBlocks } from './AssistantContentBlocks'
 import { MarkdownContent } from './MarkdownContent'
 import { ThinkingProcess } from './ThinkingProcess'
 
@@ -9,7 +11,58 @@ function getReferenceText(reference: ChatReference) {
 }
 
 function looksLikeMarkdown(content: string) {
-  return /(^|\n)\s*[-*#>`]|\[[^\]]+\]\([^)]+\)|```|\|/.test(content)
+  return /(^|\n)\s*(?:[-*#>`]|\d+\.)|\*\*[^*]+\*\*|__[^_]+__|\[[^\]]+\]\([^)]+\)|```|\|/.test(content)
+}
+
+function collectInlineCitationIndexes(content: string) {
+  const indexes = new Set<number>()
+  for (const match of content.matchAll(/\[(\d+)\]/g)) {
+    const value = Number(match[1])
+    if (Number.isInteger(value) && value > 0) {
+      indexes.add(value)
+    }
+  }
+  return [...indexes].sort((a, b) => a - b)
+}
+
+function collectSentenceCitationIndexes(sentenceCitations?: SentenceCitation[]) {
+  const indexes = new Set<number>()
+  for (const item of sentenceCitations ?? []) {
+    for (const citationIndex of item.citation_indexes ?? []) {
+      if (Number.isInteger(citationIndex) && citationIndex > 0) {
+        indexes.add(citationIndex)
+      }
+    }
+  }
+  return [...indexes].sort((a, b) => a - b)
+}
+
+function buildVisibleCitationItems({
+  content,
+  references,
+  citationSection,
+  sentenceCitations,
+}: {
+  content: string
+  references: ChatReference[]
+  citationSection?: string[]
+  sentenceCitations?: SentenceCitation[]
+}) {
+  const indexes = new Set<number>([
+    ...collectInlineCitationIndexes(content),
+    ...collectSentenceCitationIndexes(sentenceCitations),
+  ])
+
+  return [...indexes]
+    .sort((a, b) => a - b)
+    .map((index) => {
+      const label = citationSection?.[index - 1] ?? getReferenceText(references[index - 1])
+      if (!label) {
+        return null
+      }
+      return { index, label }
+    })
+    .filter((item): item is { index: number; label: string } => item !== null)
 }
 
 function splitIntoSentences(content: string) {
@@ -19,8 +72,7 @@ function splitIntoSentences(content: string) {
     .filter(Boolean)
 }
 
-function CitationList({ references, citationSection }: { references: ChatReference[]; citationSection?: string[] }) {
-  const items = citationSection?.length ? citationSection : references.map((reference) => getReferenceText(reference))
+function CitationList({ items }: { items: Array<{ index: number; label: string }> }) {
   if (!items.length) return null
 
   return (
@@ -37,14 +89,14 @@ function CitationList({ references, citationSection }: { references: ChatReferen
       >
         参考引用
       </Typography>
-      {items.map((item, index) => (
+      {items.map((item) => (
         <Typography
-          key={`${item}-${index}`}
+          key={`${item.index}-${item.label}`}
           variant="caption"
           color="text.secondary"
           sx={{ display: 'block', fontFamily: 'Poppins, Arial, sans-serif' }}
         >
-          [{index + 1}] {item}
+          [{item.index}] {item.label}
         </Typography>
       ))}
     </Stack>
@@ -106,8 +158,7 @@ function AssistantContent({
   sentenceCitations?: SentenceCitation[]
 }) {
   const hasStructuredSentenceCitations = Boolean(sentenceCitations?.length)
-  const shouldUseSentenceMode =
-    !looksLikeMarkdown(content) && (hasStructuredSentenceCitations || references.length > 0)
+  const shouldUseSentenceMode = !looksLikeMarkdown(content) && hasStructuredSentenceCitations
 
   if (!shouldUseSentenceMode) {
     return (
@@ -143,11 +194,67 @@ function AssistantContent({
   )
 }
 
+function AssistantMessage({ message }: { message: ChatMessage }) {
+  const visibleCitationItems = buildVisibleCitationItems({
+    content: message.content,
+    references: message.references ?? [],
+    citationSection: message.citationSection,
+    sentenceCitations: message.sentenceCitations,
+  })
+
+  return (
+    <Box
+      key={message.id}
+      sx={{
+        maxWidth: '80%',
+        alignSelf: 'flex-start',
+      }}
+    >
+      <ThinkingProcess
+        timelineEvents={message.timeline ?? []}
+        trace={message.agentTrace ?? null}
+        active={Boolean(message.isStreaming)}
+      />
+      {message.contentBlocks?.length ? (
+        <AssistantContentBlocks blocks={message.contentBlocks} />
+      ) : (
+        <AssistantContent
+          content={message.content}
+          references={message.references ?? []}
+          sentenceCitations={message.sentenceCitations}
+        />
+      )}
+      {visibleCitationItems.length ? <CitationList items={visibleCitationItems} /> : null}
+      {message.isStreaming ? (
+        <Box component="span" sx={{ color: 'text.secondary' }}>
+          ▋
+        </Box>
+      ) : null}
+    </Box>
+  )
+}
+
 export function ChatMessageList({
   messages,
 }: {
   messages: ChatMessage[]
 }) {
+  const bottomRef = useRef<HTMLDivElement | null>(null)
+  const previousMessageCountRef = useRef(messages.length)
+
+  useEffect(() => {
+    const hasNewMessage = messages.length > previousMessageCountRef.current
+    previousMessageCountRef.current = messages.length
+
+    if (!hasNewMessage) return
+
+    bottomRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'end',
+      inline: 'nearest',
+    })
+  }, [messages.length])
+
   return (
     <Stack spacing={2}>
       {messages.map((message) => (
@@ -168,35 +275,9 @@ export function ChatMessageList({
           >
             <Typography sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.35 }}>{message.content}</Typography>
           </Paper>
-        ) : (
-          <Box
-            key={message.id}
-            sx={{
-              maxWidth: '80%',
-              alignSelf: 'flex-start',
-            }}
-          >
-            <ThinkingProcess
-              timelineEvents={message.timeline ?? []}
-              trace={message.agentTrace ?? null}
-              active={Boolean(message.isStreaming)}
-            />
-            <AssistantContent
-              content={message.content}
-              references={message.references ?? []}
-              sentenceCitations={message.sentenceCitations}
-            />
-            {message.references?.length || message.citationSection?.length ? (
-              <CitationList references={message.references ?? []} citationSection={message.citationSection} />
-            ) : null}
-            {message.isStreaming ? (
-              <Box component="span" sx={{ color: 'text.secondary' }}>
-                ▋
-              </Box>
-            ) : null}
-          </Box>
-        )
+        ) : <AssistantMessage key={message.id} message={message} />
       ))}
+      <Box ref={bottomRef} aria-hidden="true" />
     </Stack>
   )
 }
