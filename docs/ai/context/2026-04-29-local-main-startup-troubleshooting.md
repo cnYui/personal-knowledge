@@ -11,6 +11,13 @@
 
 `D:\CodeWorkSpace\personal-knowledge-base\.worktrees\main-merge-memories`
 
+当前默认启动方式已经收敛为：
+
+- 后端使用 Docker
+- 前端使用宿主机直接运行 Vite
+
+本文件保留详细排障细节，不再作为日常启动步骤说明；日常启动方法以 `AGENTS.md` 和 `docs/ai/context/2026-04-29-startup-performance-analysis.md` 为准。
+
 ## 遇到的问题与处理
 
 ### 端口被 Docker/WSL 转发占用
@@ -118,6 +125,12 @@ docker restart pkb-backend
 
 - 后端 Uvicorn 已监听端口，但应用仍在加载 embedding 模型和启动 worker
 - 前端容器已监听端口，但仍在执行 `npm ci`，Vite dev server 尚未 ready
+- 这次进一步确认，后端慢启动的具体卡点在应用导入阶段：`graph` 路由模块级 `GraphVisualizationService()` 会立即构造 `GraphitiClient`，继而触发 `LocalEmbedder` 从 HuggingFace 加载 `paraphrase-multilingual-MiniLM-L12-v2`
+
+补充：
+
+- 以上现象是 2026-04-29 懒加载改造前的历史排障记录
+- 当前代码已把 `graph` 路由和 `GraphitiIngestWorker` 的图谱客户端初始化改成懒加载；如果现在仍看到 `/health` 空回复，不应再默认归因到 embedding 启动，应继续排查容器、数据库、网络或 reload 状态
 
 处理：
 

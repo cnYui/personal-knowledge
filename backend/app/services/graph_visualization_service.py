@@ -1,5 +1,7 @@
 """Service for graph visualization data."""
 
+from __future__ import annotations
+
 import logging
 from typing import Any
 
@@ -21,9 +23,9 @@ def _node_type_from_labels(labels: list[str] | None) -> str:
 class GraphVisualizationService:
     """Service for retrieving graph data for visualization."""
 
-    def __init__(self):
+    def __init__(self, *, graphiti_client: GraphitiClient | None = None):
         """Initialize the graph visualization service."""
-        self.graphiti_client = GraphitiClient()
+        self.graphiti_client = graphiti_client
         logger.info('GraphVisualizationService initialized')
 
     async def _fetch_with_graphiti_driver(self, driver: Any, *, group_id: str, limit: int) -> GraphData:
@@ -180,8 +182,10 @@ class GraphVisualizationService:
         driver = None
         try:
             # Graph visualization is read-only and should not depend on runtime LLM key.
-            if self.graphiti_client.client is not None:
-                driver = self.graphiti_client.client.driver
+            existing_graphiti_client = self.graphiti_client
+            existing_runtime_client = getattr(existing_graphiti_client, 'client', None) if existing_graphiti_client else None
+            if existing_runtime_client is not None:
+                driver = existing_runtime_client.driver
                 return await self._fetch_with_graphiti_driver(driver, group_id=group_id, limit=limit)
             else:
                 driver = AsyncGraphDatabase.driver(

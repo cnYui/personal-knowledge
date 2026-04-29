@@ -30,25 +30,32 @@
 - Docker 容器内的 `DATABASE_URL` 和 `NEO4J_URI` 由 Compose 注入容器网络地址；模型配置仍以根目录 `.env` 为准
 - 根目录 `.env.example` 是唯一环境变量模板；新增变量时只更新这一份模板
 
-## 启动避坑
+## 推荐启动方式
 
-- `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` 必须保证前端最终直接映射到宿主机 `5173`
-- `docker-compose.dev.yml` 已用 `ports: !override` 覆盖基础 `frontend` 端口，开发模式下 `5173` 应直接指向 Vite，而不是基础 Nginx 容器
-- 开发模式的正确验收入口只有 `http://127.0.0.1:5173`
-- 如果 `5173` 已被旧的 `pkb-frontend-dev` 或其他历史进程占用，先停掉旧容器或旧进程，再重新执行 compose 启动；不要改用 `5174/5180/5181` 交付
-- 修改 `docker-compose.yml` 或 `docker-compose.dev.yml` 后，必须重建受影响容器；例如后端环境挂载变化后执行：`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --no-deps --force-recreate backend`
-- 如果设置页返回的模型配置和根目录 `.env` 不一致，优先检查 `docker inspect pkb-backend` 是否已经挂载 `/.env -> /workspace/.env`，旧容器可能仍保留历史环境变量覆盖项
-- 如果只想本地跑前端，也允许保留后端 Docker，再在当前工作区执行：`cd frontend && npm install && npm run dev -- --host 127.0.0.1 --port 5173`
-- 如果前端命令报 `vite is not recognized as an internal or external command`，说明本地依赖没有装完整；先执行 `npm install`，必要时直接用 `frontend/node_modules/.bin/vite.cmd --host 127.0.0.1 --port 5173 --strictPort`
-- 如果 `5173/8000` 显示被 `wslrelay` 或 `com.docker.backend` 占用，先用 `docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}"` 查真实容器。常见情况是 `poco-claw-backend-1` 占用 `8000`、旧 `pkb-frontend-dev` 占用 `5173`；按用户要求可直接 `docker stop <container>` 释放端口，不要杀 Docker Desktop 后台进程
-- 如果 `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` 报 `pkb-postgres` 或 `pkb-neo4j` 容器名冲突，说明已有旧数据库容器在运行。优先复用现有数据库容器，使用 `--no-deps` 只重建 `backend/frontend`，或先确认数据安全后再删除旧数据库容器
-- 如果 `pkb-backend` 日志出现 `psycopg.OperationalError: No address associated with hostname`，通常是旧 `pkb-postgres/pkb-neo4j` 不在当前 compose 网络，导致容器内无法解析 `postgres/neo4j`。可执行：`docker network connect --alias postgres <compose_default_network> pkb-postgres` 和 `docker network connect --alias neo4j <compose_default_network> pkb-neo4j`，然后 `docker restart pkb-backend`
-- 如果 `pkb-frontend-dev` 日志出现 `sh: npm: not found`，通常是本地 Docker 的 `node:20-alpine` 标签被错误构建成了生产 Nginx 镜像。处理方式：`docker pull node:20-alpine`，然后 `docker rm -f pkb-frontend-dev`，再用 dev compose 重新启动前端
-- 前端 dev 容器启动后会先执行 `npm ci`，期间 `5173` 可能已经监听但 Vite 还没响应；需要看 `docker logs pkb-frontend-dev`，等出现 `VITE ... ready` 后再验收
-- 后端 dev 容器启动会加载本地 embedding 模型并访问 HuggingFace，`8000` 可能先监听但 `/health` 暂时 empty reply；需要看 `docker logs pkb-backend`，等出现 `Application startup complete` 后再验收
-- 启动完成后必须同时验证：
-- 前端首页：`http://127.0.0.1:5173`
-- 后端健康检查：`http://127.0.0.1:8000/health`
+- 日常本地开发默认使用：后端 Docker + 前端宿主机 Vite
+- 原因：后端依赖数据库和 Neo4j，放 Docker 更稳；前端宿主机启动更快，避免 dev 容器每次 `npm ci`
+
+### 标准步骤
+
+- 先确认 `5173` 和 `8000` 没有被旧容器或旧进程占用；优先用 `docker ps --format "table {{.Names}}\t{{.Ports}}"` 定位占用者
+- 后端启动：`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --no-deps --force-recreate backend`
+- 前端启动：`cd frontend && npm install && npm run dev -- --host 127.0.0.1 --port 5173`
+- 启动完成后必须验证：
+- 前端：`curl.exe -i --max-time 20 http://127.0.0.1:5173`
+- 后端：`curl.exe -i --max-time 20 http://127.0.0.1:8000/health`
+
+### 必要前提
+
+- `docker-compose.dev.yml` 的 `frontend` 端口覆盖必须保持宿主机 `5173 -> Vite 5173`
+- 修改 `docker-compose.yml` 或 `docker-compose.dev.yml` 后，必须重建受影响容器
+- 如果本地前端缺依赖，先执行 `npm install`，不要切到 `5174/5180/5181`
+
+### 详细排障
+
+- 详细启动排障见：
+- `docs/ai/context/2026-04-29-local-main-startup-troubleshooting.md`
+- 启动慢原因和后端加速方案见：
+- `docs/ai/context/2026-04-29-startup-performance-analysis.md`
 
 ## 当前决策记忆
 
@@ -72,6 +79,10 @@
 - 2026-04-27：环境变量收敛到根目录 `.env` 作为唯一运行时配置源；已移除 `backend/.env.example`，后端设置页和 Docker 后端都读写同一份根目录 `.env`
 - 2026-04-27：Graphiti 入图 worker 必须维护 memory 级别的排队/执行去重，禁止同一 memory 在 `pending` 期间重复入队；本地 sentence-transformers embedding 必须放到线程池执行，不能直接阻塞 FastAPI 事件循环
 - 2026-04-29：本地重启 `main` 分支时确认端口占用优先从 Docker 容器定位；`poco-claw-backend-1` 可占用 `8000`，旧 `pkb-frontend-dev` 可占用 `5173`。重启当前分支时必须确保数据库容器和后端/frontend 处于同一个 compose 网络，否则后端无法解析 `postgres/neo4j`
+- 2026-04-29：本地开发默认启动方式改为“后端 Docker + 前端宿主机 Vite”；`pkb-frontend-dev` 只保留给需要容器化前端时使用，不再作为日常默认入口
+- 2026-04-29：后端慢启动的根因是图谱相关客户端初始化时机过早：`graph` 路由模块级 `GraphVisualizationService()` 会在 import 阶段触发 `GraphitiClient -> LocalEmbedder`，而 `GraphitiIngestWorker` 在 startup step 1 里也会再次初始化图谱客户端。后续优化必须优先改成懒加载，而不是继续接受启动期同步加载 embedding 模型
+- 2026-04-29：后端启动懒加载已落地：`graph` 路由不再模块级持有 `GraphVisualizationService`，`GraphVisualizationService` 默认不再创建 `GraphitiClient`，`GraphitiIngestWorker` 改为首次入图时才初始化图谱客户端，startup 顺序也调整为“先恢复 pending 队列、先起标题 worker、最后再启动图谱 worker 消费循环”
 - 2026-04-29：Chat 页面新消息自动滚动放在 `ChatMessageList` 内部，通过列表底部锚点在 `messages.length` 增加时触发；初次渲染不滚动，流式内容增量不触发滚动，避免打断用户阅读
 - 2026-04-29：Chat 流式失败收尾问题先按“结构化 SSE error + 前端稳定结束 loading”收口，范围只覆盖主流程与后台 task 异常的统一传递，不在本轮设计中扩展上游 `502` 重试/退避/降级策略
 - 2026-04-29：`chat` 页面清空聊天记录统一复用 `useClearChatMessages + ConfirmDialog`，危险操作放在页面顶部操作区，并在发送中或清空中禁用，避免误触和流式竞态
+- 2026-04-29：Chat 分层协议剩余实现不能只补 `tool_use/tool_result` 内联卡片；必须同时修复三项行为：无命中时隐藏参考引用、`probe-retrieval` 类 timeline 必须补完成态、带有序列表或强调语法的回答必须继续走 Markdown 渲染，不能误降级到句子模式

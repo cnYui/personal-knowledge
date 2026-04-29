@@ -42,32 +42,39 @@ async def lifespan(_: FastAPI):
     logger.info('Application startup sequence started.')
 
     try:
-        logger.info('Startup step 1/3: initializing GraphitiIngestWorker.')
+        logger.info('Startup step 1/4: initializing GraphitiIngestWorker.')
         dependencies.graphiti_worker = GraphitiIngestWorker()
-        await dependencies.graphiti_worker.start()
-        logger.info('Startup step 1/3 complete: GraphitiIngestWorker started.')
+        logger.info('Startup step 1/4 complete: GraphitiIngestWorker initialized.')
     except Exception as error:
-        logger.error('Startup step 1/3 failed while starting GraphitiIngestWorker: %s', error, exc_info=True)
+        logger.error('Startup step 1/4 failed while initializing GraphitiIngestWorker: %s', error, exc_info=True)
         raise
 
     memory_service = MemoryService()
     db = SessionLocal()
     try:
-        logger.info('Startup step 2/3: recovering pending graph ingestion tasks.')
+        logger.info('Startup step 2/4: recovering pending graph ingestion tasks.')
         recovered_count = await memory_service.recover_pending_graph_tasks(db, dependencies.graphiti_worker)
-        logger.info('Startup step 2/3 complete: recovered_count=%s', recovered_count)
+        logger.info('Startup step 2/4 complete: recovered_count=%s', recovered_count)
     except Exception as error:
-        logger.error('Startup step 2/3 failed during pending graph recovery: %s', error, exc_info=True)
+        logger.error('Startup step 2/4 failed during pending graph recovery: %s', error, exc_info=True)
         raise
     finally:
         db.close()
 
     try:
-        logger.info('Startup step 3/3: starting title generation worker.')
+        logger.info('Startup step 3/4: starting title generation worker.')
         await title_generation_worker.start()
-        logger.info('Startup step 3/3 complete: title generation worker started.')
+        logger.info('Startup step 3/4 complete: title generation worker started.')
     except Exception as error:
-        logger.error('Startup step 3/3 failed while starting title generation worker: %s', error, exc_info=True)
+        logger.error('Startup step 3/4 failed while starting title generation worker: %s', error, exc_info=True)
+        raise
+
+    try:
+        logger.info('Startup step 4/4: starting GraphitiIngestWorker.')
+        await dependencies.graphiti_worker.start()
+        logger.info('Startup step 4/4 complete: GraphitiIngestWorker started.')
+    except Exception as error:
+        logger.error('Startup step 4/4 failed while starting GraphitiIngestWorker: %s', error, exc_info=True)
         raise
 
     logger.info('Application startup complete, all startup stages succeeded.')
