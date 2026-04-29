@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
@@ -29,10 +30,12 @@ class GraphitiIngestWorker:
         self,
         *,
         profile_refresh_scheduler: AgentKnowledgeProfileRefreshScheduler | None = None,
+        graphiti_client_factory: Callable[[], GraphitiClient] | None = None,
     ):
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.running = False
-        self.graphiti_client = GraphitiClient()
+        self.graphiti_client: GraphitiClient | None = None
+        self._graphiti_client_factory = graphiti_client_factory or GraphitiClient
         self.repository = MemoryRepository()
         self.profile_refresh_scheduler = profile_refresh_scheduler or agent_knowledge_profile_refresh_scheduler
         self._task = None
@@ -41,6 +44,11 @@ class GraphitiIngestWorker:
 
     def is_memory_active(self, memory_id: str) -> bool:
         return memory_id in self._queued_memory_ids or memory_id in self._processing_memory_ids
+
+    def _get_graphiti_client(self) -> GraphitiClient:
+        if self.graphiti_client is None:
+            self.graphiti_client = self._graphiti_client_factory()
+        return self.graphiti_client
 
     async def start(self):
         """Start the background worker loop."""
@@ -62,7 +70,8 @@ class GraphitiIngestWorker:
         self.running = False
         if self._task:
             await self._task
-        await self.graphiti_client.close()
+        if self.graphiti_client is not None:
+            await self.graphiti_client.close()
         logger.info('GraphitiIngestWorker stopped')
 
     async def enqueue(self, memory_id: str) -> bool:
@@ -128,7 +137,8 @@ class GraphitiIngestWorker:
             memory.graph_error = None
             db.commit()
 
-            episode_uuids = await self.graphiti_client.add_memory_in_chunks(
+            graphiti_client = self._get_graphiti_client()
+            episode_uuids = await graphiti_client.add_memory_in_chunks(
                 memory_id=memory.id,
                 title=memory.title,
                 content=memory.content,
@@ -222,11 +232,12 @@ class GraphitiIngestWorker:
 
     async def _attempt_single_chunk_with_retries(self, db, memory, title: str, content: str) -> str:
         last_error = None
+        graphiti_client = self._get_graphiti_client()
 
         for attempt in range(MAX_CHUNK_RETRIES + 1):
             try:
                 return await asyncio.wait_for(
-                    self.graphiti_client.add_memory_episode(
+                    graphiti_client.add_memory_episode(
                         memory_id=memory.id,
                         title=title,
                         content=content,

@@ -1,4 +1,12 @@
-import { AgentTrace, ChatMessage, ChatReference, ChatTimelineEvent, SentenceCitation } from '../types/chat'
+import {
+  AgentTrace,
+  ChatMessage,
+  ChatReference,
+  ChatTimelineEvent,
+  ChatToolResultEvent,
+  ChatToolUseEvent,
+  SentenceCitation,
+} from '../types/chat'
 import { ApiErrorPayload } from '../types/api'
 import { buildApiUrl, createApiError, normalizeApiError } from './http'
 
@@ -41,6 +49,8 @@ export async function sendChatMessageStream(
   onSentenceCitations: (items: SentenceCitation[]) => void,
   onTimeline: (event: ChatTimelineEvent) => void,
   onTrace: (trace: AgentTrace) => void,
+  onToolUse: (event: ChatToolUseEvent) => void,
+  onToolResult: (event: ChatToolResultEvent) => void,
   onComplete: (fullContent: string) => void,
   onError: (error: ApiErrorPayload) => void
 ): Promise<void> {
@@ -108,6 +118,28 @@ export async function sendChatMessageStream(
           } else if (data.type === 'trace') {
             const trace = data.content as AgentTrace
             onTrace(trace)
+          } else if (data.type === 'tool_use') {
+            const event = data.content as ChatToolUseEvent
+            if (event?.id && event?.name) {
+              onToolUse({
+                id: String(event.id),
+                name: String(event.name),
+                input: event.input && typeof event.input === 'object' ? event.input : {},
+                title: typeof event.title === 'string' ? event.title : undefined,
+                order: typeof event.order === 'number' ? event.order : Date.now(),
+              })
+            }
+          } else if (data.type === 'tool_result') {
+            const event = data.content as ChatToolResultEvent
+            if (event?.tool_use_id) {
+              onToolResult({
+                tool_use_id: String(event.tool_use_id),
+                status: event.status === 'error' ? 'error' : event.status === 'running' ? 'running' : 'done',
+                output: event.output,
+                is_error: Boolean(event.is_error),
+                order: typeof event.order === 'number' ? event.order : Date.now(),
+              })
+            }
           } else if (data.type === 'content') {
             fullContent += data.content
             onChunk(data.content)
@@ -125,6 +157,25 @@ export async function sendChatMessageStream(
           }
         } catch (parseError) {
           console.error('Failed to parse SSE payload:', payload, parseError)
+        }
+      }
+    }
+
+    if (sseBuffer.trim()) {
+      const dataLines = sseBuffer
+        .split('\n')
+        .filter((line) => line.startsWith('data: '))
+        .map((line) => line.slice(6))
+
+      if (dataLines.length > 0) {
+        try {
+          const data = JSON.parse(dataLines.join('\n'))
+          if (data.type === 'done') {
+            onComplete(fullContent)
+            sseBuffer = ''
+          }
+        } catch {
+          // 保留原有 warning，避免吞掉真正的异常尾包
         }
       }
     }

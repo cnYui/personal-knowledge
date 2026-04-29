@@ -498,15 +498,38 @@ class AgentNode(WorkflowNode):
                     'status': 'started',
                 }
             )
-            first_probe = await self._run_probe(
-                query=query,
-                canvas=canvas,
-                group_id=group_id,
-                probe_index=1,
-            )
+            try:
+                first_probe = await self._run_probe(
+                    query=query,
+                    canvas=canvas,
+                    group_id=group_id,
+                    probe_index=1,
+                )
+            except Exception as exc:
+                emit_timeline(
+                    {
+                        'type': 'timeline',
+                        'id': 'probe-retrieval',
+                        'kind': 'retrieval',
+                        'title': '预检知识库',
+                        'detail': f'预检知识库失败：{exc}',
+                        'status': 'error',
+                    }
+                )
+                raise
             probe_results.append(first_probe)
             probe_queries.append(query)
             first_probe_class = self._classify_probe_result(first_probe)
+            emit_timeline(
+                {
+                    'type': 'timeline',
+                    'id': 'probe-retrieval',
+                    'kind': 'retrieval',
+                    'title': '预检知识库',
+                    'detail': f'原始问题预检完成，判定为 {first_probe_class}。',
+                    'status': 'done',
+                }
+            )
             probe_decision = first_probe_class
             self._append_trace_step(
                 trace,
@@ -529,16 +552,39 @@ class AgentNode(WorkflowNode):
                         'status': 'started',
                     }
                 )
-                retry_query, retry_probe = await self._retry_probe_with_focus_points(
-                    query=query,
-                    focus_points=focus_points,
-                    canvas=canvas,
-                    group_id=group_id,
-                    probe_index=2,
-                )
+                try:
+                    retry_query, retry_probe = await self._retry_probe_with_focus_points(
+                        query=query,
+                        focus_points=focus_points,
+                        canvas=canvas,
+                        group_id=group_id,
+                        probe_index=2,
+                    )
+                except Exception as exc:
+                    emit_timeline(
+                        {
+                            'type': 'timeline',
+                            'id': 'probe-retrieval-retry',
+                            'kind': 'retrieval',
+                            'title': '重试预检',
+                            'detail': f'重试预检失败：{exc}',
+                            'status': 'error',
+                        }
+                    )
+                    raise
                 probe_results.append(retry_probe)
                 probe_queries.append(retry_query)
                 retry_probe_class = self._classify_probe_result(retry_probe)
+                emit_timeline(
+                    {
+                        'type': 'timeline',
+                        'id': 'probe-retrieval-retry',
+                        'kind': 'retrieval',
+                        'title': '重试预检',
+                        'detail': f'重试预检完成，判定为 {retry_probe_class}。',
+                        'status': 'done',
+                    }
+                )
                 probe_decision = retry_probe_class
                 self._append_trace_step(
                     trace,
