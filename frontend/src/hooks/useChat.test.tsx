@@ -121,6 +121,53 @@ describe('useSendChatMessage', () => {
     expect(assistant.content).toContain('已经生成了')
     expect(assistant.content).toContain('模型服务暂时不可用，请稍后重试。')
     expect(assistant.timeline?.[0]?.title).toBe('理解问题')
+    expect(assistant.timeline?.[0]?.status).toBe('error')
+  })
+
+  it('流式完成时会收尾仍处于 started 的时间线步骤', async () => {
+    const { sendChatMessageStream } = await import('../services/chatApi')
+    const queryClient = new QueryClient()
+
+    vi.mocked(sendChatMessageStream).mockImplementation(
+      async (_message, onChunk, _onRefs, _onCitation, _onSentence, onTimeline, _onTrace, onComplete) => {
+        onTimeline({
+          id: 'probe-retrieval',
+          kind: 'retrieval',
+          title: '预检知识库',
+          detail: '先用原始问题做一轮轻量探测。',
+          status: 'started',
+          order: 1,
+        })
+        onChunk('最终回答')
+        onComplete('最终回答')
+      }
+    )
+
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <AppToastProvider>
+            <SendOnMount message="测试问题" />
+          </AppToastProvider>
+        </QueryClientProvider>
+      )
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      vi.runOnlyPendingTimers()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const messages = loadMessagesFromStorage()
+    const assistant = messages[messages.length - 1]
+    const probeEvent = assistant.timeline?.find((event) => event.id === 'probe-retrieval')
+
+    expect(assistant.isStreaming).toBe(false)
+    expect(probeEvent?.status).toBe('done')
   })
 
   it('没有正文时会把错误文案直接写入 assistant 消息', async () => {

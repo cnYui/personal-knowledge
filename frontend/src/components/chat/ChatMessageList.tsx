@@ -9,7 +9,58 @@ function getReferenceText(reference: ChatReference) {
 }
 
 function looksLikeMarkdown(content: string) {
-  return /(^|\n)\s*[-*#>`]|\[[^\]]+\]\([^)]+\)|```|\|/.test(content)
+  return /(^|\n)\s*(?:[-*#>`]|\d+\.)|\*\*[^*]+\*\*|__[^_]+__|\[[^\]]+\]\([^)]+\)|```|\|/.test(content)
+}
+
+function collectInlineCitationIndexes(content: string) {
+  const indexes = new Set<number>()
+  for (const match of content.matchAll(/\[(\d+)\]/g)) {
+    const value = Number(match[1])
+    if (Number.isInteger(value) && value > 0) {
+      indexes.add(value)
+    }
+  }
+  return [...indexes].sort((a, b) => a - b)
+}
+
+function collectSentenceCitationIndexes(sentenceCitations?: SentenceCitation[]) {
+  const indexes = new Set<number>()
+  for (const item of sentenceCitations ?? []) {
+    for (const citationIndex of item.citation_indexes ?? []) {
+      if (Number.isInteger(citationIndex) && citationIndex > 0) {
+        indexes.add(citationIndex)
+      }
+    }
+  }
+  return [...indexes].sort((a, b) => a - b)
+}
+
+function buildVisibleCitationItems({
+  content,
+  references,
+  citationSection,
+  sentenceCitations,
+}: {
+  content: string
+  references: ChatReference[]
+  citationSection?: string[]
+  sentenceCitations?: SentenceCitation[]
+}) {
+  const indexes = new Set<number>([
+    ...collectInlineCitationIndexes(content),
+    ...collectSentenceCitationIndexes(sentenceCitations),
+  ])
+
+  return [...indexes]
+    .sort((a, b) => a - b)
+    .map((index) => {
+      const label = citationSection?.[index - 1] ?? getReferenceText(references[index - 1])
+      if (!label) {
+        return null
+      }
+      return { index, label }
+    })
+    .filter((item): item is { index: number; label: string } => item !== null)
 }
 
 function splitIntoSentences(content: string) {
@@ -19,8 +70,7 @@ function splitIntoSentences(content: string) {
     .filter(Boolean)
 }
 
-function CitationList({ references, citationSection }: { references: ChatReference[]; citationSection?: string[] }) {
-  const items = citationSection?.length ? citationSection : references.map((reference) => getReferenceText(reference))
+function CitationList({ items }: { items: Array<{ index: number; label: string }> }) {
   if (!items.length) return null
 
   return (
@@ -37,14 +87,14 @@ function CitationList({ references, citationSection }: { references: ChatReferen
       >
         参考引用
       </Typography>
-      {items.map((item, index) => (
+      {items.map((item) => (
         <Typography
-          key={`${item}-${index}`}
+          key={`${item.index}-${item.label}`}
           variant="caption"
           color="text.secondary"
           sx={{ display: 'block', fontFamily: 'Poppins, Arial, sans-serif' }}
         >
-          [{index + 1}] {item}
+          [{item.index}] {item.label}
         </Typography>
       ))}
     </Stack>
@@ -106,8 +156,7 @@ function AssistantContent({
   sentenceCitations?: SentenceCitation[]
 }) {
   const hasStructuredSentenceCitations = Boolean(sentenceCitations?.length)
-  const shouldUseSentenceMode =
-    !looksLikeMarkdown(content) && (hasStructuredSentenceCitations || references.length > 0)
+  const shouldUseSentenceMode = !looksLikeMarkdown(content) && hasStructuredSentenceCitations
 
   if (!shouldUseSentenceMode) {
     return (
@@ -176,6 +225,16 @@ export function ChatMessageList({
               alignSelf: 'flex-start',
             }}
           >
+            {(() => {
+              const visibleCitationItems = buildVisibleCitationItems({
+                content: message.content,
+                references: message.references ?? [],
+                citationSection: message.citationSection,
+                sentenceCitations: message.sentenceCitations,
+              })
+
+              return (
+                <>
             <ThinkingProcess
               timelineEvents={message.timeline ?? []}
               trace={message.agentTrace ?? null}
@@ -186,14 +245,17 @@ export function ChatMessageList({
               references={message.references ?? []}
               sentenceCitations={message.sentenceCitations}
             />
-            {message.references?.length || message.citationSection?.length ? (
-              <CitationList references={message.references ?? []} citationSection={message.citationSection} />
+            {visibleCitationItems.length ? (
+              <CitationList items={visibleCitationItems} />
             ) : null}
             {message.isStreaming ? (
               <Box component="span" sx={{ color: 'text.secondary' }}>
                 ▋
               </Box>
             ) : null}
+                </>
+              )
+            })()}
           </Box>
         )
       ))}

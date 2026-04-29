@@ -70,14 +70,31 @@ export function useSendChatMessage() {
   }
 
   const upsertTimelineEvent = (events: ChatTimelineEvent[], nextEvent: ChatTimelineEvent): ChatTimelineEvent[] => {
-    const key = `${nextEvent.id}:${nextEvent.status}`
-    const filtered = events.filter((event) => `${event.id}:${event.status}` !== key)
+    const filtered = events.filter((event) => event.id !== nextEvent.id)
     filtered.push(nextEvent)
     return filtered.sort((a, b) => {
       if (a.order !== b.order) return a.order - b.order
       if (a.id !== b.id) return a.id.localeCompare(b.id)
       return a.status.localeCompare(b.status)
     })
+  }
+
+  const finalizeTimelineEvents = (
+    events: ChatTimelineEvent[] | undefined,
+    finalStatus: 'done' | 'error'
+  ): ChatTimelineEvent[] => {
+    if (!events?.length) {
+      return []
+    }
+
+    return events.map((event) =>
+      event.status === 'started'
+        ? {
+            ...event,
+            status: finalStatus,
+          }
+        : event
+    )
   }
 
   const stopTypingLoop = () => {
@@ -94,6 +111,7 @@ export function useSendChatMessage() {
       updateAssistantDraft(assistantId, (message) => ({
         ...message,
         isStreaming: false,
+        timeline: finalizeTimelineEvents(message.timeline, 'done'),
       }))
     }
     activeAssistantIdRef.current = null
@@ -231,6 +249,7 @@ export function useSendChatMessage() {
             ...draft,
             isStreaming: false,
             content: finalizeAssistantErrorContent(draft.content, error),
+            timeline: finalizeTimelineEvents(draft.timeline, 'error'),
           }))
           showApiErrorToast(error)
           activeAssistantIdRef.current = null

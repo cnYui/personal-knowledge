@@ -22,7 +22,7 @@ interface ThinkingProcessProps {
   active?: boolean
 }
 
-function buildThinkingTimelineFromEvents(timelineEvents: ChatTimelineEvent[]) {
+function buildThinkingTimelineFromEvents(timelineEvents: ChatTimelineEvent[], active: boolean) {
   if (!timelineEvents.length) return null
 
   const latestById = new Map<string, ChatTimelineEvent>()
@@ -39,7 +39,12 @@ function buildThinkingTimelineFromEvents(timelineEvents: ChatTimelineEvent[]) {
       key: event.id,
       label: event.title,
       detail: event.detail,
-      status: event.status === 'error' ? 'error' : event.status === 'done' ? 'done' : 'current',
+      status:
+        event.status === 'error'
+          ? 'error'
+          : event.status === 'done' || !active
+            ? 'done'
+            : 'current',
       previewItems: event.preview_items ?? [],
       previewTotal: event.preview_total ?? null,
     }))
@@ -48,7 +53,7 @@ function buildThinkingTimelineFromEvents(timelineEvents: ChatTimelineEvent[]) {
 }
 
 function buildThinkingTimeline(timelineEvents: ChatTimelineEvent[], trace: AgentTrace | null, active: boolean) {
-  const fromEvents = buildThinkingTimelineFromEvents(timelineEvents)
+  const fromEvents = buildThinkingTimelineFromEvents(timelineEvents, active)
   if (fromEvents?.length) {
     const hasCurrent = fromEvents.some((item) => item.status === 'current')
     if (active && !hasCurrent) {
