@@ -49,3 +49,15 @@
 正式设计文档：
 
 - `docs/superpowers/specs/2026-04-29-chat-stream-error-closure-design.md`
+
+## 实现结果
+
+实现后，`chat` 流式链路的后台 producer task 异常会显式汇入主 SSE 循环，并统一输出结构化 `error` 事件；前端收到 `error` 后会结束 assistant 流式状态，保留已有 `timeline` 与已显示正文，并把错误文案写入消息本体。
+
+本次实现没有扩展到上游 `502` 的重试、退避或降级策略，仍然只处理失败路径收尾闭环。
+
+## 验证命令
+
+- `cd backend && pytest tests/test_chat_api.py -q`
+- `cd frontend && npm test -- --run src/hooks/useChat.test.tsx src/services/chatApi.test.ts`
+- `cd frontend && npm run build`
