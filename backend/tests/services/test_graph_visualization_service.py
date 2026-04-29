@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -70,6 +70,17 @@ class _FakeNeo4jDriver:
 
     def session(self):
         return self.session_instance
+
+
+def test_graph_visualization_service_initialization_must_not_create_graphiti_client():
+    with patch(
+        'app.services.graph_visualization_service.GraphitiClient',
+        side_effect=AssertionError('GraphitiClient must stay lazy during service initialization'),
+    ) as graphiti_client_mock:
+        service = GraphVisualizationService()
+
+    graphiti_client_mock.assert_not_called()
+    assert service.graphiti_client is None
 
 
 @pytest.mark.anyio

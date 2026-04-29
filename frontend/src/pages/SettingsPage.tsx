@@ -4,9 +4,11 @@ import ExpandMoreOutlinedIcon from '@mui/icons-material/ExpandMoreOutlined'
 import KeyOutlinedIcon from '@mui/icons-material/KeyOutlined'
 import RefreshOutlinedIcon from '@mui/icons-material/RefreshOutlined'
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined'
-import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined'
-import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined'
-import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined'
+import {
+  VisibilityOffOutlined as VisibilityOffOutlinedIcon,
+  VisibilityOutlined as VisibilityOutlinedIcon,
+  WarningAmberOutlined as WarningAmberOutlinedIcon,
+} from '@mui/icons-material'
 import {
   Accordion,
   AccordionDetails,

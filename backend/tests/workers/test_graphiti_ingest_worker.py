@@ -13,8 +13,32 @@ def test_worker_initialization(mock_graphiti_client):
 
     assert worker.queue is not None
     assert worker.running is False
-    assert worker.graphiti_client is not None
+    assert worker.graphiti_client is None
     assert worker.repository is not None
+    mock_graphiti_client.assert_not_called()
+
+
+@pytest.mark.anyio
+@patch('app.workers.graphiti_ingest_worker.asyncio.create_task')
+@patch(
+    'app.workers.graphiti_ingest_worker.GraphitiClient',
+    side_effect=AssertionError('GraphitiClient must stay lazy during worker startup'),
+)
+async def test_worker_start_must_not_create_graphiti_client(_mock_graphiti_client, mock_create_task):
+    worker = GraphitiIngestWorker()
+    scheduled_task = Mock()
+
+    def fake_create_task(coroutine):
+        coroutine.close()
+        return scheduled_task
+
+    mock_create_task.side_effect = fake_create_task
+
+    await worker.start()
+
+    assert worker.running is True
+    assert worker.graphiti_client is None
+    mock_create_task.assert_called_once()
 
 
 @pytest.mark.anyio
